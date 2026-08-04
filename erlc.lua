@@ -1,7 +1,3 @@
--- ERLC Full ESP + Matcha UI
--- Update #17
--- Vehicle HP from Control_Values.Health
--- Near only + green→red by HP ratio (fixed)
 
 local Players = game:GetService("Players")
 local Workspace = workspace or game:GetService("Workspace")
