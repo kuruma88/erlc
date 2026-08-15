@@ -1,10 +1,11 @@
 -- ERLC Full ESP + Matcha UI
--- Update #20
+-- Update #21
 -- Vehicle HP from Control_Values.Health
 -- Near only + green→red by HP ratio (fixed)
--- Helicopter distance ESP
+-- Helicopter distance ESP (fixed off-screen projection)
 -- Green status dot when ESP enabled
--- Lockpick / Glass Cutter removal detection (House / Jewelry robbery alerts)
+-- Lockpick / Glass Cutter removal detection (ignores team switches)
+-- Jail team join notify
 local Players = game:GetService("Players")
 local Workspace = workspace or game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -219,8 +220,10 @@ local vehicleHealthState = {}
 local heliLabel = nil
 local heliSpotlightLabel = nil
 local statusDot = nil
--- Tracks previous ownership of robbery tools per player
-local itemTrack = {} -- [key] = { lockpick = bool, glass = bool }
+-- Tracks previous ownership of robbery tools + team per player (to ignore team-switch removals)
+local itemTrack = {} -- [key] = { lockpick = bool, glass = bool, team = string }
+-- Tracks previous team for Jail join detection
+local teamTrack = {} -- [key] = teamName
 ----------------------------------------------------
 -- HELPERS
 ----------------------------------------------------
@@ -355,7 +358,6 @@ local function healthToColor(health, maxHealth)
     local maxH = tonumber(maxHealth) or 0
     if maxH <= 0 then maxH = 100 end
     local t = math.clamp((tonumber(health) or 0) / maxH, 0, 1)
-    -- Color3.new uses 0–1 range (reliable on Matcha)
     return Color3.new(1 - t, t, 0.12)
 end
 local function drawText(label, pos, text, color, yOffset, baseFontSize, dist)
@@ -395,28 +397,33 @@ local function getHelicopterPosition()
     if ok and pos then return pos end
     return nil
 end
+-- Fixed: correct unpacking of WorldToViewportPoint + proper behind-camera handling
 local function getHeliScreenPos(worldPos)
     local margin = cfg.helicopter.edgeMargin or 50
     local sPos, onScreen = WorldToScreen(worldPos)
-    if onScreen and sPos then
+    if onScreen and sPos and (sPos.X ~= 0 or sPos.Y ~= 0) then
         return Vector2.new(sPos.X, sPos.Y), true
     end
+    -- Fallback for off-screen / behind camera (edge ESP)
     local cam = Workspace.CurrentCamera
-    if cam and cam.WorldToViewportPoint then
-        local ok, sp, _, depth = pcall(function()
-            return cam:WorldToViewportPoint(worldPos)
-        end)
-        if ok and sp then
-            local viewport = cam.ViewportSize
-            if depth and depth < 0 then
-                sp = Vector3.new(viewport.X - sp.X, viewport.Y - sp.Y, depth)
-            end
-            local x = math.clamp(sp.X, margin, viewport.X - margin)
-            local y = math.clamp(sp.Y, margin, viewport.Y - margin)
-            return Vector2.new(x, y), false
-        end
+    if not cam then return nil, false end
+    local success, viewportPoint, isOnScreen = pcall(function()
+        return cam:WorldToViewportPoint(worldPos)
+    end)
+    if not success or not viewportPoint then
+        return nil, false
     end
-    return nil, false
+    local viewport = cam.ViewportSize
+    local depth = viewportPoint.Z
+    local x, y = viewportPoint.X, viewportPoint.Y
+    -- Behind camera: mirror to opposite side of screen
+    if depth < 0 then
+        x = viewport.X - x
+        y = viewport.Y - y
+    end
+    x = math.clamp(x, margin, viewport.X - margin)
+    y = math.clamp(y, margin, viewport.Y - margin)
+    return Vector2.new(x, y), false
 end
 local function collectVehicleModels()
     local models = {}
@@ -451,6 +458,14 @@ local function hasTool(player, toolName)
         return true
     end
     return false
+end
+local function getTeamName(player)
+    if not player then return "" end
+    local team = player.Team
+    if team and typeof(team) == "Instance" then
+        return team.Name or ""
+    end
+    return ""
 end
 ----------------------------------------------------
 -- CACHE
@@ -688,18 +703,28 @@ local function updatePersonalCache()
         })
     end
 end
--- Detect removal of Lockpick / Glass Cutter from any player's inventory
-local function updateRobberyToolMonitor()
+-- Detect removal of Lockpick / Glass Cutter (ignores removals caused by team switch)
+-- Also detects when any player joins the Jail team
+local function updateRobberyToolAndJailMonitor()
     local currentlyTracked = {}
     for _, player in ipairs(Players:GetPlayers()) do
         local key = getKey(player)
         if key then
             currentlyTracked[key] = true
+            local teamName = getTeamName(player)
             local hasLockpick = hasTool(player, "Lockpick")
             local hasGlassCutter = hasTool(player, "Glass Cutter")
+            -- Jail team join detection
+            local prevTeam = teamTrack[key]
+            if prevTeam ~= nil and prevTeam ~= "Jail" and teamName == "Jail" then
+                if notify then
+                    notify(player.Name .. " jailed", "ERLC ESP", 5)
+                end
+            end
+            teamTrack[key] = teamName
+            -- Robbery tool removal (only if team did NOT change)
             local prev = itemTrack[key]
-            if prev then
-                -- Only fire on actual removal (was present, now gone)
+            if prev and prev.team == teamName then
                 if prev.lockpick and not hasLockpick then
                     if notify then
                         notify("Potential House Robbery", "ERLC ESP", 5)
@@ -713,7 +738,8 @@ local function updateRobberyToolMonitor()
             end
             itemTrack[key] = {
                 lockpick = hasLockpick,
-                glass = hasGlassCutter
+                glass = hasGlassCutter,
+                team = teamName
             }
         end
     end
@@ -721,6 +747,11 @@ local function updateRobberyToolMonitor()
     for key in pairs(itemTrack) do
         if not currentlyTracked[key] then
             itemTrack[key] = nil
+        end
+    end
+    for key in pairs(teamTrack) do
+        if not currentlyTracked[key] then
+            teamTrack[key] = nil
         end
     end
 end
@@ -755,7 +786,6 @@ local function updateVehicleHealthVisual(localPos, maxDist)
     for _, model in ipairs(vehicles:GetChildren()) do
         if model:IsA("Model") or model:IsA("Folder") then
             local owner = getOwnerString(model)
-            -- ONLY your car
             if owner and owner == myName then
                 local key = getKey(model)
                 if key then
@@ -824,7 +854,6 @@ end
 ----------------------------------------------------
 local function updateVisuals()
     syncFromUI()
-    -- Status indicator: small green dot at top-center when master ESP is on
     local dot = ensureStatusDot()
     if cfg.masterEnabled then
         local cam = Workspace.CurrentCamera
@@ -1034,7 +1063,7 @@ task.spawn(function()
         pcall(updateBountyCache)
         pcall(updateStolenCache)
         pcall(updatePersonalCache)
-        pcall(updateRobberyToolMonitor)
+        pcall(updateRobberyToolAndJailMonitor)
         task.wait(0.5)
     end
 end)
@@ -1065,5 +1094,5 @@ task.spawn(function()
     end
 end)
 if notify then
-    notify("ERLC ESP loaded\nUpdate #20", "ERLC ESP", 3)
+    notify("ERLC ESP loaded\nUpdate #21", "ERLC ESP", 3)
 end
