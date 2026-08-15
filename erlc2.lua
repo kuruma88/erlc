@@ -1,8 +1,9 @@
 -- ERLC Full ESP + Matcha UI
--- Update #18
+-- Update #19
 -- Vehicle HP from Control_Values.Health
 -- Near only + green→red by HP ratio (fixed)
--- Helicopter distance ESP added
+-- Helicopter distance ESP
+-- Green status dot when ESP enabled
 local Players = game:GetService("Players")
 local Workspace = workspace or game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -216,6 +217,7 @@ local personalList = {}
 local vehicleHealthState = {}
 local heliLabel = nil
 local heliSpotlightLabel = nil
+local statusDot = nil
 ----------------------------------------------------
 -- HELPERS
 ----------------------------------------------------
@@ -259,6 +261,20 @@ local function createCircleEsp()
     circle.ZIndex = 119
     circle.Visible = false
     return circle
+end
+local function ensureStatusDot()
+    if statusDot then return statusDot end
+    local dot = Drawing.new("Circle")
+    dot.Filled = true
+    dot.NumSides = 12
+    dot.Thickness = 1
+    dot.Transparency = 0
+    dot.Radius = 4
+    dot.Color = Color3.fromRGB(60, 255, 90)
+    dot.ZIndex = 200
+    dot.Visible = false
+    statusDot = dot
+    return statusDot
 end
 local function removeEsp(entry)
     if not entry then return end
@@ -756,6 +772,21 @@ end
 ----------------------------------------------------
 local function updateVisuals()
     syncFromUI()
+
+    -- Status indicator: small green dot at top-center when master ESP is on
+    local dot = ensureStatusDot()
+    if cfg.masterEnabled then
+        local cam = Workspace.CurrentCamera
+        local vp = cam and cam.ViewportSize
+        local x = vp and (vp.X * 0.5) or 960
+        local y = 12
+        dot.Position = Vector2.new(x, y)
+        dot.Color = Color3.fromRGB(60, 255, 90)
+        dot.Visible = true
+    else
+        dot.Visible = false
+    end
+
     if not cfg.masterEnabled then
         for _, list in ipairs({criminalList, panicList, deployableList, bountyList, stolenList, personalList}) do
             for _, e in ipairs(list) do hideEntry(e) end
@@ -983,5 +1014,5 @@ task.spawn(function()
     end
 end)
 if notify then
-    notify("ERLC ESP loaded\nUpdate #18", "ERLC ESP", 3)
+    notify("ERLC ESP loaded\nUpdate #19", "ERLC ESP", 3)
 end
