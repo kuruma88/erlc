@@ -1,5 +1,5 @@
 -- ERLC Full ESP + Matcha UI
--- Update #17
+-- Update #17 (Repaired)
 -- Vehicle HP from Control_Values.Health
 -- Near only + green→red by HP ratio (fixed)
 
@@ -258,6 +258,16 @@ local heliSpotlightLabel = nil
 local OFFSET_STUD_SCALE = 0.1
 local DYNAMIC_REF_DIST = 400
 
+-- [BUG FIX] Added missing WorldToScreen function definition
+local function WorldToScreen(worldPos)
+    local cam = Workspace.CurrentCamera
+    if cam then
+        local screenPos, onScreen = cam:WorldToViewportPoint(worldPos)
+        return Vector2.new(screenPos.X, screenPos.Y), onScreen
+    end
+    return nil, false
+end
+
 local function calcFontSize(baseSize, dist)
     baseSize = tonumber(baseSize) or 10
     local dynamic = tonumber(cfg.settings.dynamicSize) or 0
@@ -387,7 +397,6 @@ local function healthToColor(health, maxHealth)
     local maxH = tonumber(maxHealth) or 0
     if maxH <= 0 then maxH = 100 end
     local t = math.clamp((tonumber(health) or 0) / maxH, 0, 1)
-    -- Color3.new uses 0–1 range (reliable on Matcha)
     return Color3.new(1 - t, t, 0.12)
 end
 
@@ -1113,5 +1122,5 @@ task.spawn(function()
 end)
 
 if notify then
-    notify("ERLC ESP loaded\nUpdate #17", "ERLC ESP", 3)
+    notify("ERLC ESP loaded\nUpdate #17 (Fixed)", "ERLC ESP", 3)
 end
