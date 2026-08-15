@@ -1,9 +1,3 @@
--- ERLC Full ESP + Matcha UI
--- Update #19
--- Vehicle HP from Control_Values.Health
--- Near only + green→red by HP ratio (fixed)
--- Helicopter distance ESP
--- Green status dot when ESP enabled
 local Players = game:GetService("Players")
 local Workspace = workspace or game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -69,6 +63,9 @@ local cfg = {
         showSpotlight = true,
         edgeMargin = 50,
     },
+    robberyAlert = {
+        enabled = true,
+    },
     settings = {
         fontName = "SystemBold",
         dynamicSize = 0,
@@ -124,6 +121,9 @@ UI.AddTab("ERLC ESP", function(tab)
     left:ColorPicker("esp_deploy_col", colToRGB(cfg.deployable.color), function(c)
         cfg.deployable.color = c
     end)
+    left:Toggle("esp_robbery", "Robbery Tool Alerts", cfg.robberyAlert.enabled, function(v)
+        cfg.robberyAlert.enabled = v
+    end)
     local right = tab:Section("Vehicles / Heli", "Right")
     right:Toggle("esp_bounty", "Bounty Vehicles", cfg.bountyVehicle.enabled, function(v)
         cfg.bountyVehicle.enabled = v
@@ -170,6 +170,7 @@ UI.AddTab("ERLC ESP", function(tab)
         UI.SetValue("esp_criminal", true)
         UI.SetValue("esp_panic", true)
         UI.SetValue("esp_deploy", true)
+        UI.SetValue("esp_robbery", true)
         UI.SetValue("esp_bounty", true)
         UI.SetValue("esp_stolen", true)
         UI.SetValue("esp_stolen_price", true)
@@ -192,6 +193,7 @@ local function syncFromUI()
     cfg.criminal.enabled = g("esp_criminal", cfg.criminal.enabled)
     cfg.panic.enabled = g("esp_panic", cfg.panic.enabled)
     cfg.deployable.enabled = g("esp_deploy", cfg.deployable.enabled)
+    cfg.robberyAlert.enabled = g("esp_robbery", cfg.robberyAlert.enabled)
     cfg.bountyVehicle.enabled = g("esp_bounty", cfg.bountyVehicle.enabled)
     cfg.stolenVehicle.enabled = g("esp_stolen", cfg.stolenVehicle.enabled)
     cfg.stolenVehicle.showPrice = g("esp_stolen_price", cfg.stolenVehicle.showPrice)
@@ -218,6 +220,8 @@ local vehicleHealthState = {}
 local heliLabel = nil
 local heliSpotlightLabel = nil
 local statusDot = nil
+-- Robbery tool tracking: [userId] = { lockpick = bool, glassCutter = bool, name = string }
+local robberyToolState = {}
 ----------------------------------------------------
 -- HELPERS
 ----------------------------------------------------
@@ -435,6 +439,65 @@ local function collectVehicleModels()
         end
     end
     return models
+end
+----------------------------------------------------
+-- ROBBERY TOOL ALERTS
+----------------------------------------------------
+local function containerHasTool(container, toolName)
+    if not container then return false end
+    for _, child in ipairs(container:GetChildren()) do
+        if child:IsA("Tool") and child.Name == toolName then
+            return true
+        end
+    end
+    return false
+end
+
+local function playerHasTool(player, toolName)
+    if not player then return false end
+    local backpack = player:FindFirstChild("Backpack")
+    local character = player.Character
+    return containerHasTool(backpack, toolName) or containerHasTool(character, toolName)
+end
+
+local function updateRobberyToolAlerts()
+    if not cfg.masterEnabled or not cfg.robberyAlert.enabled then
+        return
+    end
+    local seen = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        local uid = player.UserId
+        if uid then
+            seen[uid] = true
+            local hasLockpick = playerHasTool(player, "Lockpick")
+            local hasGlassCutter = playerHasTool(player, "Glass Cutter")
+            local prev = robberyToolState[uid]
+            if prev then
+                -- Detect removal (had it, now doesn't)
+                if prev.lockpick and not hasLockpick then
+                    if notify then
+                        notify(player.Name .. " lost Lockpick", "Potential House Robbery", 5)
+                    end
+                end
+                if prev.glassCutter and not hasGlassCutter then
+                    if notify then
+                        notify(player.Name .. " lost Glass Cutter", "Potential Jewelry Robbery", 5)
+                    end
+                end
+            end
+            robberyToolState[uid] = {
+                lockpick = hasLockpick,
+                glassCutter = hasGlassCutter,
+                name = player.Name,
+            }
+        end
+    end
+    -- Cleanup players who left
+    for uid, _ in pairs(robberyToolState) do
+        if not seen[uid] then
+            robberyToolState[uid] = nil
+        end
+    end
 end
 ----------------------------------------------------
 -- CACHE
@@ -984,6 +1047,7 @@ task.spawn(function()
         pcall(updateBountyCache)
         pcall(updateStolenCache)
         pcall(updatePersonalCache)
+        pcall(updateRobberyToolAlerts)
         task.wait(0.5)
     end
 end)
@@ -1014,5 +1078,5 @@ task.spawn(function()
     end
 end)
 if notify then
-    notify("ERLC ESP loaded\nUpdate #19", "ERLC ESP", 3)
+    notify("ERLC ESP loaded\nUpdate #20", "ERLC ESP", 3)
 end
