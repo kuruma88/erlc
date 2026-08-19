@@ -1,5 +1,5 @@
 -- ERLC Full ESP + Matcha UI + Autofarms
--- Update #18 — Vehicle HP + ATM / Lockpick / Glass Cutting (fixed UI)
+-- Update #18 — Vehicle HP + ATM / Lockpick / Glass Cutting
 
 local Players            = game:GetService("Players")
 local Workspace          = workspace or game:GetService("Workspace")
@@ -59,38 +59,38 @@ local cfg = {
         yOffset     = 22,
     },
     helicopter = {
-        enabled           = true,
-        color             = Color3.fromRGB(255, 220, 50),
-        yOffset           = 40,
-        fontSize          = 14,
-        text              = "Helicopter",
-        spotlightFontSize = 11,
-        spotlightColor    = Color3.fromRGB(255, 180, 40),
-        showSpotlight     = true,
-        edgeMargin        = 50,
+        enabled          = true,
+        color            = Color3.fromRGB(255, 220, 50),
+        yOffset          = 40,
+        fontSize         = 14,
+        text             = "Helicopter",
+        spotlightFontSize= 11,
+        spotlightColor   = Color3.fromRGB(255, 180, 40),
+        showSpotlight    = true,
+        edgeMargin       = 50,
     },
 
     -- Autofarms
-    atm      = { enabled = false },
-    lockpick = { enabled = false },
-    glasscut = { enabled = false },
+    atm        = { enabled = false },
+    lockpick   = { enabled = false },
+    glasscut   = { enabled = false },
 
     settings = {
-        fontName    = "SystemBold",
-        dynamicSize = 0,
-        maxDistance = 5000,
+        fontName     = "SystemBold",
+        dynamicSize  = 0,
+        maxDistance  = 5000,
     }
 }
 
 local FONT_NAMES = { "UI", "System", "SystemBold", "Minecraft", "Monospace", "Pixel", "Fortnite" }
 local FONT_MAP = {
-    UI         = Drawing.Fonts.UI,
-    System     = Drawing.Fonts.System,
-    SystemBold = Drawing.Fonts.SystemBold,
-    Minecraft  = Drawing.Fonts.Minecraft,
-    Monospace  = Drawing.Fonts.Monospace,
-    Pixel      = Drawing.Fonts.Pixel,
-    Fortnite   = Drawing.Fonts.Fortnite,
+    UI          = Drawing.Fonts.UI,
+    System      = Drawing.Fonts.System,
+    SystemBold  = Drawing.Fonts.SystemBold,
+    Minecraft   = Drawing.Fonts.Minecraft,
+    Monospace   = Drawing.Fonts.Monospace,
+    Pixel       = Drawing.Fonts.Pixel,
+    Fortnite    = Drawing.Fonts.Fortnite,
 }
 
 local function getEspFont()
@@ -106,7 +106,7 @@ end
 ----------------------------------------------------
 UI.AddTab("ERLC ESP", function(tab)
     ------------------------------------------------
-    -- Left column: ESP
+    -- Left: ESP
     ------------------------------------------------
     local left = tab:Section("ESP", "Left")
 
@@ -132,7 +132,7 @@ UI.AddTab("ERLC ESP", function(tab)
     left:ColorPicker("esp_deploy_col", colToRGB(cfg.deployable.color), function(c) cfg.deployable.color = c end)
 
     ------------------------------------------------
-    -- Right column: Vehicles / Heli
+    -- Right: Vehicles / Heli
     ------------------------------------------------
     local right = tab:Section("Vehicles / Heli", "Right")
 
@@ -168,7 +168,6 @@ UI.AddTab("ERLC ESP", function(tab)
         UI.SetValue("esp_heli", true)
         UI.SetValue("esp_heli_spotlight", true)
         UI.SetValue("esp_maxdist", 5000)
-
         UI.SetValue("auto_atm", false)
         UI.SetValue("auto_lockpick", false)
         UI.SetValue("auto_glass", false)
@@ -182,12 +181,9 @@ UI.AddTab("ERLC ESP", function(tab)
     end)
 
     ------------------------------------------------
-    -- Autofarms (Right column, under Vehicles)
+    -- Autofarms section
     ------------------------------------------------
-    local auto = tab:Section("Autofarms", "Right")
-
-    auto:Text("Minigame Autos")
-    auto:Tip("Enable the ones you want. They activate automatically when the minigame appears.")
+    local auto = tab:Section("Autofarms", "Left")
 
     auto:Toggle("auto_atm", "ATM Hack", cfg.atm.enabled, function(v)
         cfg.atm.enabled = v
@@ -242,7 +238,7 @@ local function syncFromUI()
 end
 
 ----------------------------------------------------
--- SHARED OFFSET LOADER
+-- SHARED OFFSET LOADER (used by all autofarms)
 ----------------------------------------------------
 local OFFSETS = nil
 local function loadOffsets()
@@ -294,16 +290,16 @@ local function mread(kind, addr)
 end
 
 ----------------------------------------------------
--- LISTS + HELPERS
+-- LISTS + HELPERS (ESP)
 ----------------------------------------------------
-local criminalList       = {}
-local panicList          = {}
-local deployableList     = {}
-local bountyList         = {}
-local stolenList         = {}
-local personalList       = {}
+local criminalList      = {}
+local panicList         = {}
+local deployableList    = {}
+local bountyList        = {}
+local stolenList        = {}
+local personalList      = {}
 local vehicleHealthState = {}
-local heliLabel          = nil
+local heliLabel         = nil
 local heliSpotlightLabel = nil
 
 local OFFSET_STUD_SCALE = 0.1
@@ -343,12 +339,12 @@ end
 
 local function createCircleEsp()
     local circle = Drawing.new("Circle")
-    circle.Filled       = true
-    circle.NumSides     = 10
-    circle.Thickness    = 1
-    circle.Transparency = 0
-    circle.ZIndex       = 119
-    circle.Visible      = false
+    circle.Filled      = true
+    circle.NumSides    = 10
+    circle.Thickness   = 1
+    circle.Transparency= 0
+    circle.ZIndex      = 119
+    circle.Visible     = false
     return circle
 end
 
@@ -499,7 +495,7 @@ local function getHeliScreenPos(worldPos)
 end
 
 ----------------------------------------------------
--- CACHE UPDATES
+-- CACHE UPDATES (ESP)
 ----------------------------------------------------
 local function updateCriminalCache()
     if not cfg.masterEnabled or not cfg.criminal.enabled then
@@ -780,10 +776,10 @@ local function updateVehicleHealthVisual(localPos, maxDist)
     local myName = LocalPlayer and LocalPlayer.Name
     if not myName then return end
 
-    local now      = tick()
-    local seen     = {}
-    local nearDist = maxDist or cfg.settings.maxDistance or 5000
-    local vehicles = Workspace:FindFirstChild("Vehicles")
+    local now     = tick()
+    local seen    = {}
+    local nearDist= maxDist or cfg.settings.maxDistance or 5000
+    local vehicles= Workspace:FindFirstChild("Vehicles")
     if not vehicles then
         for key, st in pairs(vehicleHealthState) do
             if st.label then st.label.Visible = false end
@@ -865,7 +861,7 @@ local function updateVehicleHealthVisual(localPos, maxDist)
 end
 
 ----------------------------------------------------
--- VISUAL LOOP
+-- VISUAL LOOP (ESP)
 ----------------------------------------------------
 local function updateVisuals()
     syncFromUI()
@@ -1111,6 +1107,19 @@ task.spawn(function()
         return false
     end
 
+    local function centerOf(inst)
+        local x = mread("float", inst.Address + OFF_POS)
+        local y = mread("float", inst.Address + OFF_POS + 4)
+        local w = mread("float", inst.Address + OFF_SIZE)
+        local h = mread("float", inst.Address + OFF_SIZE + 4)
+        if not x or not y or not w or not h then
+            local p = inst.AbsolutePosition
+            local s = inst.AbsoluteSize
+            x, y, w, h = p.X, p.Y, s.X, s.Y
+        end
+        return x + w / 2, y + h / 2
+    end
+
     local function waitFor(parent, name, timeout)
         local t = tick()
         while atmMyId == _G.ATM_HACK_INSTANCE do
@@ -1199,11 +1208,13 @@ task.spawn(function()
     print("ATM: ready")
 
     while atmMyId == _G.ATM_HACK_INSTANCE do
+        -- Wait until the feature is enabled
         while atmMyId == _G.ATM_HACK_INSTANCE and not cfg.atm.enabled do
             task.wait(0.4)
         end
         if atmMyId ~= _G.ATM_HACK_INSTANCE then return end
 
+        -- Wait for the hacking screen to appear
         while atmMyId == _G.ATM_HACK_INSTANCE and cfg.atm.enabled and not visible(hacking) do
             task.wait(0.2)
         end
@@ -1212,6 +1223,7 @@ task.spawn(function()
         print("ATM: HACKING ACTIVE")
         if notify then notify("ATM Hack Active", "Autofarms", 2) end
 
+        -- Read the 5 target codes
         local targets = {}
         local tFill = tick()
         while atmMyId == _G.ATM_HACK_INSTANCE and cfg.atm.enabled and tick() - tFill < 10 do
@@ -1345,6 +1357,7 @@ task.spawn(function()
         return false
     end
 
+    -- Wait for GUI once
     local gui = nil
     local t = tick()
     while lockMyId == _G.LOCKPICK_INSTANCE and tick() - t < 600 do
@@ -1378,6 +1391,7 @@ task.spawn(function()
         print("Lockpick: ACTIVE")
         if notify then notify("Lockpick Active", "Autofarms", 2) end
 
+        -- small grace
         local tGrace = tick()
         while lockMyId == _G.LOCKPICK_INSTANCE and cfg.lockpick.enabled and tick() - tGrace < 1.5 do
             task.wait(0.1)
@@ -1590,7 +1604,7 @@ task.spawn(function()
 end)
 
 ----------------------------------------------------
--- MAIN THREADS
+-- MAIN THREADS (ESP)
 ----------------------------------------------------
 task.spawn(function()
     while true do
