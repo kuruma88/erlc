@@ -106,7 +106,7 @@ end
 ----------------------------------------------------
 UI.AddTab("ERLC ESP", function(tab)
     ------------------------------------------------
-    -- Left: ESP
+    -- Left column: ESP
     ------------------------------------------------
     local left = tab:Section("ESP", "Left")
 
@@ -132,7 +132,7 @@ UI.AddTab("ERLC ESP", function(tab)
     left:ColorPicker("esp_deploy_col", colToRGB(cfg.deployable.color), function(c) cfg.deployable.color = c end)
 
     ------------------------------------------------
-    -- Right: Vehicles / Heli
+    -- Right column: Vehicles / Heli
     ------------------------------------------------
     local right = tab:Section("Vehicles / Heli", "Right")
 
@@ -168,6 +168,7 @@ UI.AddTab("ERLC ESP", function(tab)
         UI.SetValue("esp_heli", true)
         UI.SetValue("esp_heli_spotlight", true)
         UI.SetValue("esp_maxdist", 5000)
+
         UI.SetValue("auto_atm", false)
         UI.SetValue("auto_lockpick", false)
         UI.SetValue("auto_glass", false)
@@ -181,9 +182,12 @@ UI.AddTab("ERLC ESP", function(tab)
     end)
 
     ------------------------------------------------
-    -- Autofarms section
+    -- Autofarms (clearly on Right, under vehicles)
     ------------------------------------------------
-    local auto = tab:Section("Autofarms", "Left")
+    local auto = tab:Section("Autofarms", "Right")
+
+    auto:Text("Minigame Autos")
+    auto:Tip("Enable the ones you want. They activate automatically when the minigame appears.")
 
     auto:Toggle("auto_atm", "ATM Hack", cfg.atm.enabled, function(v)
         cfg.atm.enabled = v
@@ -206,36 +210,6 @@ UI.AddTab("ERLC ESP", function(tab)
         end
     end)
 end)
-
-local function syncFromUI()
-    local function g(id, fallback)
-        local v = UI.GetValue(id)
-        if v == nil then return fallback end
-        return v
-    end
-
-    cfg.masterEnabled              = g("esp_master", cfg.masterEnabled)
-    cfg.criminal.enabled           = g("esp_criminal", cfg.criminal.enabled)
-    cfg.panic.enabled              = g("esp_panic", cfg.panic.enabled)
-    cfg.deployable.enabled         = g("esp_deploy", cfg.deployable.enabled)
-    cfg.bountyVehicle.enabled      = g("esp_bounty", cfg.bountyVehicle.enabled)
-    cfg.stolenVehicle.enabled      = g("esp_stolen", cfg.stolenVehicle.enabled)
-    cfg.stolenVehicle.showPrice    = g("esp_stolen_price", cfg.stolenVehicle.showPrice)
-    cfg.personalVehicle.enabled    = g("esp_personal", cfg.personalVehicle.enabled)
-    cfg.vehicleHealth.enabled      = g("esp_vhealth", cfg.vehicleHealth.enabled)
-    cfg.helicopter.enabled         = g("esp_heli", cfg.helicopter.enabled)
-    cfg.helicopter.showSpotlight   = g("esp_heli_spotlight", cfg.helicopter.showSpotlight)
-    cfg.settings.maxDistance       = g("esp_maxdist", cfg.settings.maxDistance)
-
-    cfg.atm.enabled      = g("auto_atm", cfg.atm.enabled)
-    cfg.lockpick.enabled = g("auto_lockpick", cfg.lockpick.enabled)
-    cfg.glasscut.enabled = g("auto_glass", cfg.glasscut.enabled)
-
-    local fontIdx = g("esp_font", 2)
-    if type(fontIdx) == "number" and FONT_NAMES[fontIdx + 1] then
-        cfg.settings.fontName = FONT_NAMES[fontIdx + 1]
-    end
-end
 
 ----------------------------------------------------
 -- SHARED OFFSET LOADER (used by all autofarms)
