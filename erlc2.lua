@@ -1,16 +1,19 @@
 -- ERLC Full ESP + Matcha UI + Modern Autofarms (Update #20)
 -- Fixed: Full Hotwire suite (Timing Bar, Wires, Numbers Hack), TangledWires hierarchy, ATM & Lockpick
+
 local Players            = game:GetService("Players")
 local Workspace          = workspace or game:GetService("Workspace")
 local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local RunService         = game:GetService("RunService")
 local LocalPlayer        = Players.LocalPlayer
 local cam                = Workspace and Workspace.CurrentCamera
+
 ----------------------------------------------------
 -- CONFIG
 ----------------------------------------------------
 local cfg = {
     masterEnabled = true,
+
     criminal = {
         enabled  = true,
         color    = Color3.fromRGB(255, 55, 55),
@@ -67,17 +70,20 @@ local cfg = {
         showSpotlight     = true,
         edgeMargin        = 50,
     },
+
     -- Autofarms
     atm      = { enabled = false, delay = 50 },
     lockpick = { enabled = false, delay = 40, tolerance = 2 },
     glasscut = { enabled = false, lead = 0 },
     hotwire  = { enabled = false, delay = 50, latency = 0, margin = 25 },
+
     settings = {
         fontName    = "SystemBold",
         dynamicSize = 0,
         maxDistance = 5000,
     }
 }
+
 local FONT_NAMES = { "UI", "System", "SystemBold", "Minecraft", "Monospace", "Pixel", "Fortnite" }
 local FONT_MAP = {
     UI         = Drawing.Fonts.UI,
@@ -88,12 +94,15 @@ local FONT_MAP = {
     Pixel      = Drawing.Fonts.Pixel,
     Fortnite   = Drawing.Fonts.Fortnite,
 }
+
 local function getEspFont()
     return FONT_MAP[cfg.settings.fontName] or Drawing.Fonts.SystemBold
 end
+
 local function colToRGB(c)
     return c.R, c.G, c.B, 1
 end
+
 ----------------------------------------------------
 -- MEMORY OFFSETS & UNCACHED READING
 ----------------------------------------------------
@@ -104,18 +113,21 @@ local GUI_OFF = {
     AbsolutePosition = 268,  -- 0x10C
     AbsoluteSize     = 276,  -- 0x114
 }
+
 local function rawAddr(inst)
     if not inst then return nil end
     local a = inst.Address
     if type(a) == "string" then return tonumber(a, 16) or tonumber(a) end
     return tonumber(a)
 end
+
 local function memRead(kind, address)
     if not address then return nil end
     local value = nil
     pcall(function() value = memory_read(kind, address) end)
     return value
 end
+
 local function memVisible(inst)
     if not inst then return false end
     local addr = rawAddr(inst)
@@ -126,6 +138,7 @@ local function memVisible(inst)
     local ok, vis = pcall(function() return inst.Visible end)
     return ok and vis == true
 end
+
 local function memAbsPos(inst)
     local pos = nil
     pcall(function() pos = inst.AbsolutePosition end)
@@ -139,6 +152,7 @@ local function memAbsPos(inst)
     end
     return nil, nil
 end
+
 local function memAbsSize(inst)
     local size = nil
     pcall(function() size = inst.AbsoluteSize end)
@@ -152,6 +166,7 @@ local function memAbsSize(inst)
     end
     return nil, nil
 end
+
 local function memText(inst)
     local text = nil
     pcall(function() text = inst.Text end)
@@ -163,6 +178,7 @@ local function memText(inst)
     end
     return text or ""
 end
+
 local function memColorRGB(inst)
     local addr = rawAddr(inst)
     if addr then
@@ -187,11 +203,13 @@ local function memColorRGB(inst)
     end
     return 0, 0, 0
 end
+
 local function viewportSize()
     local vp = cam and cam.ViewportSize
     if vp and vp.X and vp.X > 64 and vp.Y and vp.Y > 64 then return vp.X, vp.Y end
     return nil, nil
 end
+
 local function mouseXY()
     local m = nil
     pcall(function() m = LocalPlayer and LocalPlayer:GetMouse() end)
@@ -200,17 +218,20 @@ local function mouseXY()
     if type(x) ~= "number" or type(y) ~= "number" then return nil, nil end
     return x, y
 end
+
 local function clamp(n, a, b)
     if n < a then return a end
     if n > b then return b end
     return n
 end
+
 local function findChild(parent, name)
     if not parent then return nil end
     local found = nil
     pcall(function() found = parent:FindFirstChild(name) end)
     return found
 end
+
 local function findPath(root, ...)
     local cur = root
     for i = 1, select("#", ...) do
@@ -219,18 +240,21 @@ local function findPath(root, ...)
     end
     return cur
 end
+
 local function getPlayerGui()
     if not LocalPlayer then return nil end
     local pg = nil
     pcall(function() pg = LocalPlayer:FindFirstChildOfClass("PlayerGui") end)
     return pg or findChild(LocalPlayer, "PlayerGui")
 end
+
 local function guiRect(inst)
     local x, y = memAbsPos(inst)
     local w, h = memAbsSize(inst)
     if not x or not y or not w or not h then return nil end
     return { x = x, y = y, w = w, h = h, cx = x + w / 2, cy = y + h / 2 }
 end
+
 local function inViewport(inst, pad)
     local rect = guiRect(inst)
     local vw, vh = viewportSize()
@@ -238,6 +262,7 @@ local function inViewport(inst, pad)
     pad = pad or 8
     return rect.y < vh - pad and (rect.y + rect.h) > pad and rect.x < vw - pad and (rect.x + rect.w) > pad
 end
+
 local function moveMouseToward(tx, ty)
     local vw, vh = viewportSize()
     if vw then
@@ -263,6 +288,7 @@ local function moveMouseToward(tx, ty)
     end
     return dist
 end
+
 local function clickAtGui(inst, maxDist)
     local rect = guiRect(inst)
     if not rect then return false, 999 end
@@ -271,6 +297,7 @@ local function clickAtGui(inst, maxDist)
     pcall(mouse1click)
     return true, dist
 end
+
 ----------------------------------------------------
 -- MATCHA UI TABS
 ----------------------------------------------------
@@ -287,6 +314,7 @@ UI.AddTab("ERLC ESP", function(tab)
     left:ColorPicker("esp_panic_col", colToRGB(cfg.panic.color), function(c) cfg.panic.color = c end)
     left:Toggle("esp_deploy", "Deployables", cfg.deployable.enabled, function(v) cfg.deployable.enabled = v end)
     left:ColorPicker("esp_deploy_col", colToRGB(cfg.deployable.color), function(c) cfg.deployable.color = c end)
+
     -- Right: Vehicles
     local right = tab:Section("Vehicles / Heli", "Right")
     right:Toggle("esp_bounty", "Bounty Vehicles", cfg.bountyVehicle.enabled, function(v) cfg.bountyVehicle.enabled = v end)
@@ -302,10 +330,12 @@ UI.AddTab("ERLC ESP", function(tab)
     right:ColorPicker("esp_heli_col", colToRGB(cfg.helicopter.color), function(c) cfg.helicopter.color = c end)
     right:Toggle("esp_heli_spotlight", "Show Spotlighted", cfg.helicopter.showSpotlight, function(v) cfg.helicopter.showSpotlight = v end)
     right:ColorPicker("esp_heli_spotcol", colToRGB(cfg.helicopter.spotlightColor), function(c) cfg.helicopter.spotlightColor = c end)
+
     -- Autofarms Section
     local auto = tab:Section("Autofarms", "Right")
     auto:Text("Minigame Autos")
     auto:Tip("Enable the ones you want. They run automatically when the minigame appears.")
+
     auto:Toggle("auto_atm", "Auto ATM (Grid)", cfg.atm.enabled, function(v)
         cfg.atm.enabled = v
         if notify then notify(v and "ATM Hack: ON" or "ATM Hack: OFF", "Autofarms", 2) end
@@ -322,6 +352,7 @@ UI.AddTab("ERLC ESP", function(tab)
         cfg.hotwire.enabled = v
         if notify then notify(v and "Auto Hotwire Suite: ON" or "Auto Hotwire Suite: OFF", "Autofarms", 2) end
     end)
+
     right:Spacing()
     right:Button("Reset Defaults", function()
         UI.SetValue("esp_master", true)
@@ -336,24 +367,29 @@ UI.AddTab("ERLC ESP", function(tab)
         UI.SetValue("esp_heli", true)
         UI.SetValue("esp_heli_spotlight", true)
         UI.SetValue("esp_maxdist", 5000)
+
         UI.SetValue("auto_atm", false)
         UI.SetValue("auto_lockpick", false)
         UI.SetValue("auto_glass", false)
         UI.SetValue("auto_hotwire", false)
+
         cfg.masterEnabled     = true
         cfg.atm.enabled       = false
         cfg.lockpick.enabled  = false
         cfg.glasscut.enabled  = false
         cfg.hotwire.enabled   = false
+
         if notify then notify("Defaults restored", "ERLC ESP", 2) end
     end)
 end)
+
 local function syncFromUI()
     local function g(id, fallback)
         local v = UI.GetValue(id)
         if v == nil then return fallback end
         return v
     end
+
     cfg.masterEnabled           = g("esp_master", cfg.masterEnabled)
     cfg.criminal.enabled        = g("esp_criminal", cfg.criminal.enabled)
     cfg.panic.enabled           = g("esp_panic", cfg.panic.enabled)
@@ -366,15 +402,18 @@ local function syncFromUI()
     cfg.helicopter.enabled      = g("esp_heli", cfg.helicopter.enabled)
     cfg.helicopter.showSpotlight= g("esp_heli_spotlight", cfg.helicopter.showSpotlight)
     cfg.settings.maxDistance    = g("esp_maxdist", cfg.settings.maxDistance)
+
     cfg.atm.enabled      = g("auto_atm", cfg.atm.enabled)
     cfg.lockpick.enabled = g("auto_lockpick", cfg.lockpick.enabled)
     cfg.glasscut.enabled = g("auto_glass", cfg.glasscut.enabled)
     cfg.hotwire.enabled  = g("auto_hotwire", cfg.hotwire.enabled)
+
     local fontIdx = g("esp_font", 2)
     if type(fontIdx) == "number" and FONT_NAMES[fontIdx + 1] then
         cfg.settings.fontName = FONT_NAMES[fontIdx + 1]
     end
 end
+
 ----------------------------------------------------
 -- ESP LISTS & DRAWING ROUTINES
 ----------------------------------------------------
@@ -387,8 +426,10 @@ local personalList       = {}
 local vehicleHealthState = {}
 local heliLabel          = nil
 local heliSpotlightLabel = nil
+
 local OFFSET_STUD_SCALE = 0.1
 local DYNAMIC_REF_DIST  = 400
+
 local function calcFontSize(baseSize, dist)
     baseSize = tonumber(baseSize) or 10
     local dynamic = tonumber(cfg.settings.dynamicSize) or 0
@@ -400,6 +441,7 @@ local function calcFontSize(baseSize, dist)
     local scale = minScale + distNorm * (maxScale - minScale)
     return math.max(8, math.floor(baseSize * scale + 0.5))
 end
+
 local function applyTextStyle(label, fs)
     if not label then return end
     fs = math.max(8, math.floor(tonumber(fs) or 10))
@@ -409,6 +451,7 @@ local function applyTextStyle(label, fs)
         label.Size     = fs
     end)
 end
+
 local function createTextEsp(size)
     local label = Drawing.new("Text")
     label.Center  = true
@@ -418,6 +461,7 @@ local function createTextEsp(size)
     applyTextStyle(label, size or 12)
     return label
 end
+
 local function createCircleEsp()
     local circle = Drawing.new("Circle")
     circle.Filled       = true
@@ -428,18 +472,21 @@ local function createCircleEsp()
     circle.Visible      = false
     return circle
 end
+
 local function removeEsp(entry)
     if not entry then return end
     if entry.Label then pcall(function() entry.Label:Remove() end) end
     if entry.PriceLabel then pcall(function() entry.PriceLabel:Remove() end) end
     if entry.Circle then pcall(function() entry.Circle:Remove() end) end
 end
+
 local function hideEntry(entry)
     if not entry then return end
     if entry.Label then entry.Label.Visible = false end
     if entry.PriceLabel then entry.PriceLabel.Visible = false end
     if entry.Circle then entry.Circle.Visible = false end
 end
+
 local function getLocalPos()
     local char = LocalPlayer and LocalPlayer.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
@@ -447,16 +494,19 @@ local function getLocalPos()
     if cam and cam.Position then return cam.Position end
     return nil
 end
+
 local function getRootPart(model)
     if not model then return nil end
     return model:FindFirstChild("HumanoidRootPart")
         or model.PrimaryPart
         or model:FindFirstChildWhichIsA("BasePart")
 end
+
 local function getKey(obj)
     if not obj then return nil end
     return obj.Address or tostring(obj)
 end
+
 local function getStringField(model, name)
     if not model then return nil end
     local attr = model:GetAttribute(name)
@@ -471,8 +521,10 @@ local function getStringField(model, name)
     end
     return nil
 end
+
 local function getOwnerString(model) return getStringField(model, "Owner") end
 local function getDriverName(model)  return getStringField(model, "DriverName") end
+
 local function getVehicleHealth(model)
     if not model then return nil end
     local cv = model:FindFirstChild("Control_Values")
@@ -480,6 +532,7 @@ local function getVehicleHealth(model)
     if healthObj and typeof(healthObj.Value) == "number" then return healthObj.Value end
     return nil
 end
+
 local function getVehicleMaxHealth(model)
     if not model then return nil end
     local cv = model:FindFirstChild("Control_Values")
@@ -490,12 +543,14 @@ local function getVehicleMaxHealth(model)
     end
     return nil
 end
+
 local function healthToColor(health, maxHealth)
     local maxH = tonumber(maxHealth) or 0
     if maxH <= 0 then maxH = 100 end
     local t = math.clamp((tonumber(health) or 0) / maxH, 0, 1)
     return Color3.new(1 - t, t, 0.12)
 end
+
 local function drawText(label, pos, text, color, yOffset, baseFontSize, dist)
     local anchorPos = Vector3.new(pos.X, pos.Y + (yOffset * OFFSET_STUD_SCALE), pos.Z)
     local sPos, onScreen = WorldToScreen(anchorPos)
@@ -512,11 +567,13 @@ local function drawText(label, pos, text, color, yOffset, baseFontSize, dist)
     label.Visible  = true
     return sPos
 end
+
 local function getHelicopterPosition()
     local folder = Workspace:FindFirstChild("Helicopter")
     local model  = folder and folder:FindFirstChild("Helicopter")
     local root   = getRootPart(model)
     if root and root.Parent then return root.Position end
+
     local ok, pos = pcall(function()
         local rs   = ReplicatedStorage:FindFirstChild("ReplicatedState")
         local misc = rs and rs:FindFirstChild("MiscValues")
@@ -529,10 +586,12 @@ local function getHelicopterPosition()
     if ok and pos then return pos end
     return nil
 end
+
 local function getHeliScreenPos(worldPos)
     local margin = cfg.helicopter.edgeMargin or 50
     local sPos, onScreen = WorldToScreen(worldPos)
     if onScreen and sPos then return Vector2.new(sPos.X, sPos.Y), true end
+
     if cam and cam.WorldToViewportPoint then
         local ok, sp, _, depth = pcall(function() return cam:WorldToViewportPoint(worldPos) end)
         if ok and sp then
@@ -545,6 +604,7 @@ local function getHeliScreenPos(worldPos)
     end
     return nil, false
 end
+
 ----------------------------------------------------
 -- CACHE UPDATES
 ----------------------------------------------------
@@ -553,6 +613,7 @@ local function updateCriminalCache()
         for i = #criminalList, 1, -1 do removeEsp(criminalList[i]) table.remove(criminalList, i) end
         return
     end
+
     local tracked = {}
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.UserId ~= (LocalPlayer and LocalPlayer.UserId) then
@@ -564,6 +625,7 @@ local function updateCriminalCache()
             end
         end
     end
+
     for i = #criminalList, 1, -1 do
         local e = criminalList[i]
         local key = getKey(e.Player)
@@ -574,6 +636,7 @@ local function updateCriminalCache()
             tracked[key] = nil
         end
     end
+
     for _, player in pairs(tracked) do
         if player ~= LocalPlayer then
             table.insert(criminalList, {
@@ -584,11 +647,13 @@ local function updateCriminalCache()
         end
     end
 end
+
 local function updatePanicCache()
     if not cfg.masterEnabled or not cfg.panic.enabled then
         for i = #panicList, 1, -1 do removeEsp(panicList[i]) table.remove(panicList, i) end
         return
     end
+
     local tracked = {}
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
@@ -604,6 +669,7 @@ local function updatePanicCache()
             end
         end
     end
+
     for i = #panicList, 1, -1 do
         local e = panicList[i]
         local key = getKey(e.Player)
@@ -614,15 +680,18 @@ local function updatePanicCache()
             tracked[key] = nil
         end
     end
+
     for _, player in pairs(tracked) do
         table.insert(panicList, { Player = player, Label = createTextEsp(cfg.panic.fontSize) })
     end
 end
+
 local function updateDeployableCache()
     if not cfg.masterEnabled or not cfg.deployable.enabled then
         for i = #deployableList, 1, -1 do removeEsp(deployableList[i]) table.remove(deployableList, i) end
         return
     end
+
     local folder = Workspace:FindFirstChild("Deployables")
     local tracked = {}
     if folder then
@@ -633,6 +702,7 @@ local function updateDeployableCache()
             end
         end
     end
+
     for i = #deployableList, 1, -1 do
         local e = deployableList[i]
         local key = getKey(e.Model)
@@ -643,15 +713,18 @@ local function updateDeployableCache()
             tracked[key] = nil
         end
     end
+
     for _, model in pairs(tracked) do
         table.insert(deployableList, { Model = model, Label = createTextEsp(cfg.deployable.fontSize) })
     end
 end
+
 local function updateBountyCache()
     if not cfg.masterEnabled or not cfg.bountyVehicle.enabled then
         for i = #bountyList, 1, -1 do removeEsp(bountyList[i]) table.remove(bountyList, i) end
         return
     end
+
     local folder   = Workspace:FindFirstChild("BountyVehicles")
     local vehicles = folder and folder:FindFirstChild("Vehicles")
     local tracked  = {}
@@ -663,6 +736,7 @@ local function updateBountyCache()
             end
         end
     end
+
     for i = #bountyList, 1, -1 do
         local e = bountyList[i]
         local key = getKey(e.Model)
@@ -673,15 +747,18 @@ local function updateBountyCache()
             tracked[key] = nil
         end
     end
+
     for _, model in pairs(tracked) do
         table.insert(bountyList, { Model = model, Label = createTextEsp(cfg.bountyVehicle.fontSize) })
     end
 end
+
 local function updateStolenCache()
     if not cfg.masterEnabled or not cfg.stolenVehicle.enabled then
         for i = #stolenList, 1, -1 do removeEsp(stolenList[i]) table.remove(stolenList, i) end
         return
     end
+
     local vehicles = Workspace:FindFirstChild("Vehicles")
     local tracked  = {}
     if vehicles then
@@ -695,6 +772,7 @@ local function updateStolenCache()
             end
         end
     end
+
     for i = #stolenList, 1, -1 do
         local e = stolenList[i]
         local key = getKey(e.Model)
@@ -705,6 +783,7 @@ local function updateStolenCache()
             tracked[key] = nil
         end
     end
+
     for _, model in pairs(tracked) do
         table.insert(stolenList, {
             Model      = model,
@@ -713,13 +792,16 @@ local function updateStolenCache()
         })
     end
 end
+
 local function updatePersonalCache()
     if not cfg.masterEnabled or not cfg.personalVehicle.enabled then
         for i = #personalList, 1, -1 do removeEsp(personalList[i]) table.remove(personalList, i) end
         return
     end
+
     local myName = LocalPlayer and LocalPlayer.Name
     if not myName then return end
+
     local vehicles = Workspace:FindFirstChild("Vehicles")
     local tracked  = {}
     if vehicles then
@@ -733,6 +815,7 @@ local function updatePersonalCache()
             end
         end
     end
+
     for i = #personalList, 1, -1 do
         local e = personalList[i]
         local key = getKey(e.Model)
@@ -743,22 +826,27 @@ local function updatePersonalCache()
             tracked[key] = nil
         end
     end
+
     for _, model in pairs(tracked) do
         table.insert(personalList, { Model = model, Label = createTextEsp(cfg.personalVehicle.fontSize) })
     end
 end
+
 local function updateVehicleHealthVisual(localPos, maxDist)
     if not cfg.masterEnabled or not cfg.vehicleHealth.enabled or not localPos then
         for _, st in pairs(vehicleHealthState) do if st.label then st.label.Visible = false end end
         return
     end
+
     local myName = LocalPlayer and LocalPlayer.Name
     if not myName then return end
+
     local now      = tick()
     local seen     = {}
     local nearDist = maxDist or cfg.settings.maxDistance or 5000
     local vehicles = Workspace:FindFirstChild("Vehicles")
     if not vehicles then return end
+
     for _, model in ipairs(vehicles:GetChildren()) do
         if model:IsA("Model") or model:IsA("Folder") then
             local owner = getOwnerString(model)
@@ -788,16 +876,19 @@ local function updateVehicleHealthVisual(localPos, maxDist)
                                     vehicleHealthState[key] = st
                                 end
                                 st.model = model
+
                                 local realMax = getVehicleMaxHealth(model)
                                 if realMax and realMax > 0 then
                                     st.maxHealth = realMax
                                 elseif health > (st.maxHealth or 0) then
                                     st.maxHealth = health
                                 end
+
                                 if health < st.lastHealth then
                                     st.showUntil = now + (cfg.vehicleHealth.showSeconds or 5)
                                 end
                                 st.lastHealth = health
+
                                 if now < st.showUntil then
                                     local text = "HP: " .. tostring(math.floor(health + 0.5))
                                     local col  = healthToColor(health, st.maxHealth)
@@ -812,6 +903,7 @@ local function updateVehicleHealthVisual(localPos, maxDist)
             end
         end
     end
+
     for key, st in pairs(vehicleHealthState) do
         if not seen[key] then
             if st.label then st.label.Visible = false end
@@ -822,8 +914,10 @@ local function updateVehicleHealthVisual(localPos, maxDist)
         end
     end
 end
+
 local function updateVisuals()
     syncFromUI()
+
     if not cfg.masterEnabled then
         for _, list in ipairs({criminalList, panicList, deployableList, bountyList, stolenList, personalList}) do
             for _, e in ipairs(list) do hideEntry(e) end
@@ -833,9 +927,11 @@ local function updateVisuals()
         if heliSpotlightLabel then heliSpotlightLabel.Visible = false end
         return
     end
+
     local localPos = getLocalPos()
     local maxDist  = cfg.settings.maxDistance
     local myName   = LocalPlayer and LocalPlayer.Name
+
     for _, e in ipairs(criminalList) do
         pcall(function()
             local player = e.Player
@@ -843,9 +939,11 @@ local function updateVisuals()
             local char = player.Character
             local head = char and char:FindFirstChild("Head")
             if not head then hideEntry(e) return end
+
             local pos  = head.Position
             local dist = localPos and (pos - localPos).Magnitude or 0
             if localPos and dist > maxDist then hideEntry(e) return end
+
             local sPos, onScreen = WorldToScreen(pos)
             if onScreen and sPos then
                 local radius = math.clamp(380 / (dist > 0 and dist or 1), 3, 8)
@@ -853,6 +951,7 @@ local function updateVisuals()
                 e.Circle.Radius   = radius
                 e.Circle.Color    = cfg.criminal.color
                 e.Circle.Visible  = true
+
                 local val = player:FindFirstChild("Is_Wanted")
                 local wantedVal = val and val.Value or 0
                 local fs = calcFontSize(cfg.criminal.fontSize, dist)
@@ -866,6 +965,7 @@ local function updateVisuals()
             end
         end)
     end
+
     for _, e in ipairs(panicList) do
         pcall(function()
             local player = e.Player
@@ -879,6 +979,7 @@ local function updateVisuals()
             drawText(e.Label, pos, "*PANIC*", cfg.panic.color, cfg.panic.yOffset, cfg.panic.fontSize, dist)
         end)
     end
+
     for _, e in ipairs(deployableList) do
         pcall(function()
             local model = e.Model
@@ -891,6 +992,7 @@ local function updateVisuals()
             drawText(e.Label, pos, model.Name, cfg.deployable.color, cfg.deployable.yOffset, cfg.deployable.fontSize, dist)
         end)
     end
+
     for _, e in ipairs(bountyList) do
         pcall(function()
             local model = e.Model
@@ -903,6 +1005,7 @@ local function updateVisuals()
             drawText(e.Label, pos, model.Name, cfg.bountyVehicle.color, cfg.bountyVehicle.yOffset, cfg.bountyVehicle.fontSize, dist)
         end)
     end
+
     for _, e in ipairs(stolenList) do
         pcall(function()
             local model = e.Model
@@ -912,6 +1015,7 @@ local function updateVisuals()
             local pos  = root.Position
             local dist = localPos and (pos - localPos).Magnitude or 0
             if localPos and dist > maxDist then hideEntry(e) return end
+
             local sPos = drawText(e.Label, pos, "*Stolen Vehicle*", cfg.stolenVehicle.color, cfg.stolenVehicle.yOffset, cfg.stolenVehicle.fontSize, dist)
             if sPos and cfg.stolenVehicle.showPrice then
                 local price = model:GetAttribute("ChopShopPrice") or 0
@@ -926,6 +1030,7 @@ local function updateVisuals()
             end
         end)
     end
+
     for _, e in ipairs(personalList) do
         pcall(function()
             local model = e.Model
@@ -940,7 +1045,9 @@ local function updateVisuals()
             drawText(e.Label, pos, cfg.personalVehicle.text, cfg.personalVehicle.color, cfg.personalVehicle.yOffset, cfg.personalVehicle.fontSize, dist)
         end)
     end
+
     pcall(function() updateVehicleHealthVisual(localPos, maxDist) end)
+
     -- Helicopter
     if cfg.helicopter.enabled then
         if not heliLabel then
@@ -951,6 +1058,7 @@ local function updateVisuals()
             heliSpotlightLabel = createTextEsp(cfg.helicopter.spotlightFontSize)
             heliSpotlightLabel.Color = cfg.helicopter.spotlightColor
         end
+
         local heliPos = getHelicopterPosition()
         if heliPos then
             local dist = localPos and (heliPos - localPos).Magnitude or 0
@@ -962,6 +1070,7 @@ local function updateVisuals()
                 heliLabel.Color    = cfg.helicopter.color
                 heliLabel.Position = screenPos
                 heliLabel.Visible  = true
+
                 if cfg.helicopter.showSpotlight then
                     local spotlightNames = {}
                     for _, player in ipairs(Players:GetPlayers()) do
@@ -998,6 +1107,7 @@ local function updateVisuals()
         if heliSpotlightLabel then heliSpotlightLabel.Visible = false end
     end
 end
+
 ----------------------------------------------------
 -- 1. ATM HACK (MODERN GRID SOLVER)
 ----------------------------------------------------
@@ -1007,6 +1117,7 @@ local function looksLikeCode(text)
     if #s < 2 or #s > 6 or not s:match("^%w+$") then return nil end
     return s:upper()
 end
+
 local function gatherCodeNodes(root, depth, out, limit)
     if not root or depth > 5 or #out >= limit then return end
     pcall(function()
@@ -1018,6 +1129,7 @@ local function gatherCodeNodes(root, depth, out, limit)
         end
     end)
 end
+
 local function findCodeGrid(hacking)
     local candidates = {}
     gatherCodeNodes(hacking, 0, candidates, 300)
@@ -1038,6 +1150,7 @@ local function findCodeGrid(hacking)
     if not bestGroup or bestCount < 6 then return {} end
     return bestGroup
 end
+
 local function findLitIndex(nodes)
     local best, bestIdx, sum, count = nil, nil, 0, 0
     for i, n in ipairs(nodes) do
@@ -1054,6 +1167,7 @@ local function findLitIndex(nodes)
     if best < avg * 1.12 or (best - avg) < 0.05 then return nil end
     return bestIdx
 end
+
 local atmState = {
     session = nil,
     nodes = {},
@@ -1066,6 +1180,7 @@ local atmState = {
     lastClick = 0,
     lastCode = "",
 }
+
 local function stepAtm()
     if not cfg.atm.enabled then return end
     local pg = getPlayerGui()
@@ -1077,6 +1192,7 @@ local function stepAtm()
         atmState.nodes = {}
         return
     end
+
     local sessionId = tostring(hacking.Address or hacking)
     if atmState.session ~= sessionId then
         atmState.session = sessionId
@@ -1085,20 +1201,25 @@ local function stepAtm()
         atmState.clickedRound = false
         atmState.lastCode = ""
     end
+
     local selecting = findChild(hacking, "SelectingCode")
     local now = os.clock()
     if #atmState.nodes == 0 or now - atmState.nodesAt > 0.25 then
         atmState.nodes = findCodeGrid(hacking)
         atmState.nodesAt = now
     end
+
     local nodes = atmState.nodes
     if #nodes == 0 then return end
+
     local target = looksLikeCode(selecting and memText(selecting) or nil)
     if not target then return end
+
     if target ~= atmState.lastCode then
         atmState.lastCode = target
         atmState.clickedRound = false
     end
+
     local goal = nil
     for i = 1, #nodes do
         if looksLikeCode(memText(nodes[i].inst)) == target or nodes[i].key == target then
@@ -1107,11 +1228,14 @@ local function stepAtm()
         end
     end
     if not goal then return end
+
     local gx, gy = memAbsPos(goal.inst)
     local gsx, gsy = memAbsSize(goal.inst)
     if not gx or not gy or not gsx then return end
+
     local dist = moveMouseToward(gx + gsx / 2, gy + (gsy or 18) / 2)
     local onCell = dist <= math.max((gsx or 20) * 0.35, 10)
+
     local lit = findLitIndex(nodes)
     if lit and lit ~= atmState.litIndex then
         local prev = atmState.litIndex
@@ -1123,15 +1247,19 @@ local function stepAtm()
         atmState.litIndex = lit
         atmState.litSince = now
     end
+
     if not onCell then return end
+
     local liveKey = lit and looksLikeCode(memText(nodes[lit].inst)) or nil
     if atmState.clickedRound then
         local cycleTime = math.max(atmState.stepTime * #nodes + 0.3, 0.6)
         if now - atmState.lastClick <= cycleTime then return end
         atmState.clickedRound = false
     end
+
     local delay = math.max((tonumber(cfg.atm.delay) or 50) / 1000, 0.03)
     if now - atmState.lastClick < delay then return end
+
     local ready = liveKey == target
     if ready then
         pcall(mouse1click)
@@ -1139,10 +1267,12 @@ local function stepAtm()
         atmState.clickedRound = true
     end
 end
+
 ----------------------------------------------------
 -- 2. LOCKPICK
 ----------------------------------------------------
 local lockpickState = { pin = 1, session = nil, lastClick = 0, pinY = nil, pinT = 0, vel = 0 }
+
 local function pinOverlapsLine(pin, line, pad)
     local pinC = findChild(pin, "Center") or pin
     local lineC = findChild(line, "Center") or line
@@ -1161,6 +1291,7 @@ local function pinOverlapsLine(pin, line, pad)
     local lTop, lBot = ly - lh / 2, ly + lh / 2
     return pTop <= lBot and lTop <= pBot
 end
+
 local function stepLockpick()
     if not cfg.lockpick.enabled then return end
     local pg = getPlayerGui()
@@ -1171,9 +1302,11 @@ local function stepLockpick()
         lockpickState.pin = 1
         return
     end
+
     local pick = findChild(ui, "Pick")
     local line = pick and findChild(pick, "RedLine")
     if not pick or not line or not inViewport(pick, 8) then return end
+
     local sessionId = tostring(pick.Address or pick)
     if lockpickState.session ~= sessionId then
         lockpickState.session = sessionId
@@ -1182,11 +1315,14 @@ local function stepLockpick()
         lockpickState.vel = 0
     end
     if lockpickState.pin > 6 then return end
+
     local pin = findChild(pick, tostring(lockpickState.pin))
     if not pin then return end
+
     local now = os.clock()
     local delay = math.max((tonumber(cfg.lockpick.delay) or 40) / 1000, 0.03)
     if now - lockpickState.lastClick < delay then return end
+
     local pad = math.max(tonumber(cfg.lockpick.tolerance) or 2, 0)
     if pinOverlapsLine(pin, line, pad) then
         pcall(mouse1click)
@@ -1196,10 +1332,12 @@ local function stepLockpick()
         lockpickState.vel = 0
     end
 end
+
 ----------------------------------------------------
 -- 3. GLASS CUTTING
 ----------------------------------------------------
 local glassState = { lastX = nil, lastY = nil, lastT = 0, velX = 0, velY = 0 }
+
 local function stepGlassCut()
     if not cfg.glasscut.enabled then return end
     local pg = getPlayerGui()
@@ -1209,12 +1347,15 @@ local function stepGlassCut()
         glassState.lastX, glassState.lastY = nil, nil
         return
     end
+
     local box = findChild(cut, "GreenBox")
     if not box then return end
+
     local vw, vh = viewportSize()
     local x, y = memAbsPos(box)
     local sx, sy = memAbsSize(box)
     if not x or not y or not sx or not sy or sx < 4 or sy < 4 then return end
+
     local cx, cy = x + sx / 2, y + sy / 2
     local now = os.clock()
     if glassState.lastX and glassState.lastT > 0 then
@@ -1225,15 +1366,19 @@ local function stepGlassCut()
         end
     end
     glassState.lastX, glassState.lastY, glassState.lastT = cx, cy, now
+
     local lead = math.max((tonumber(cfg.glasscut.lead) or 0) / 1000, 0)
     local tx, ty = cx + glassState.velX * lead, cy + glassState.velY * lead
     moveMouseToward(tx, ty)
 end
+
 ----------------------------------------------------
 -- 4. HOTWIRE & CROWBAR SUITE (BAR, WIRES & NUMBERS)
 ----------------------------------------------------
+
 -- A. Timing Bar
 local crowBarState = { barX = nil, barT = 0, vel = 0, frameDt = nil, lastClick = 0 }
+
 local function stepCrowbarBar(menus, now)
     local crow = findChild(menus, "Crowbar")
     local main = findChild(crow, "Main")
@@ -1241,9 +1386,11 @@ local function stepCrowbarBar(menus, now)
     local bar = findChild(gameF, "Indicator")
     local zone = findChild(gameF, "Target")
     if not bar or not zone or memVisible(crow) ~= true or memVisible(main) == false then return false end
+
     local barRect = guiRect(bar)
     local zoneRect = guiRect(zone)
     if not barRect or not zoneRect or zoneRect.w < 4 or not inViewport(zone, 20) then return false end
+
     local prevX, prevT = crowBarState.barX, crowBarState.barT
     crowBarState.barX, crowBarState.barT = barRect.cx, now
     if prevX and prevT > 0 then
@@ -1260,7 +1407,9 @@ local function stepCrowbarBar(menus, now)
             crowBarState.vel = 0
         end
     end
+
     if math.abs(crowBarState.vel) < 5 then return true end
+
     local latency = math.max((tonumber(cfg.hotwire.latency) or 50) / 1000, 0)
     local frameDt = math.min(crowBarState.frameDt or (1 / 60), 0.05)
     local marginPct = math.min(math.max(tonumber(cfg.hotwire.margin) or 25, 0), 45) / 100
@@ -1268,6 +1417,7 @@ local function stepCrowbarBar(menus, now)
     local fromX = barRect.cx + crowBarState.vel * latency
     local toX = fromX + crowBarState.vel * frameDt
     local lo, hi = math.min(fromX, toX), math.max(fromX, toX)
+
     local delay = math.max((tonumber(cfg.hotwire.delay) or 50) / 1000, 0.05)
     if now - crowBarState.lastClick >= delay then
         if lo <= zoneRect.x + zoneRect.w - inset and hi >= zoneRect.x + inset then
@@ -1277,6 +1427,7 @@ local function stepCrowbarBar(menus, now)
     end
     return true
 end
+
 -- B. Numbers Hack
 local numHackState = {
     session = nil,
@@ -1293,18 +1444,21 @@ local numHackState = {
     lastClick = 0,
     goClicked = false,
 }
+
 local function parseDigit(text)
     if type(text) ~= "string" then return nil end
     local d = tonumber(text:match("(%d)"))
     if d and d >= 1 and d <= 6 then return tostring(d) end
     return nil
 end
+
 local function stepNumbersHack(menus, now)
     local root = findChild(menus, "NumbersHack")
     if not root or memVisible(root) == false then
         numHackState.session = nil
         return false
     end
+
     local sessionId = tostring(root.Address or root)
     if numHackState.session ~= sessionId then
         numHackState.session = sessionId
@@ -1314,6 +1468,7 @@ local function stepNumbersHack(menus, now)
         numHackState.lastDigit = nil
         numHackState.goClicked = false
     end
+
     local screen = findPath(root, "Background", "ScreenBase", "ScreenUIBase")
     local main = findChild(screen, "MainScreen")
     local startF = findChild(main, "Start")
@@ -1321,6 +1476,7 @@ local function stepNumbersHack(menus, now)
     local currentImg = findChild(main, "CurrentNumber")
     local current = findChild(currentImg, "Number") or currentImg
     local buttons = findChild(screen, "NumberButtons")
+
     if startF and memVisible(startF) == true and goBtn and not numHackState.goClicked then
         if select(1, clickAtGui(goBtn, 18)) then
             numHackState.goClicked = true
@@ -1329,6 +1485,7 @@ local function stepNumbersHack(menus, now)
         end
         return true
     end
+
     if numHackState.playing then
         local digit = numHackState.seq[numHackState.playIndex]
         if not digit then
@@ -1339,6 +1496,7 @@ local function stepNumbersHack(menus, now)
         end
         local btn = buttons and findChild(buttons, digit)
         if not btn then return true end
+
         local delay = 0.16
         if now - numHackState.lastClick >= delay then
             if select(1, clickAtGui(btn, 14)) then
@@ -1348,6 +1506,7 @@ local function stepNumbersHack(menus, now)
         end
         return true
     end
+
     local shown = memVisible(currentImg)
     if shown == true then
         if not numHackState.lastVisible then
@@ -1379,6 +1538,7 @@ local function stepNumbersHack(menus, now)
         numHackState.seenDigit = nil
         numHackState.seenCount = 0
     end
+
     local hiddenLongEnough = numHackState.hiddenSince > 0 and (now - numHackState.hiddenSince) >= 0.3
     local lastAged = (now - (numHackState.lastDigitAt or 0)) >= 0.45
     if #numHackState.seq >= 6 and shown == false and hiddenLongEnough and lastAged then
@@ -1387,13 +1547,16 @@ local function stepNumbersHack(menus, now)
     end
     return true
 end
+
 -- C. Wire Pairing (Connect Wires Solver)
 local WIRE_COLORS = { "Blue", "Green", "Red", "Yellow" }
 local wireState = { session = nil, phase = "aim", held = false, lastDone = 0, releasedAt = 0, nearSince = 0, currentColor = nil, done = {} }
+
 local function wireSide(name)
     if type(name) ~= "string" then return nil, nil end
     return name:match("^(%a+)Wire([LR])$")
 end
+
 local function findActiveTangleFolder(ui)
     local folder = findChild(ui, "TangledWires")
     if not folder then return nil end
@@ -1413,18 +1576,22 @@ local function findActiveTangleFolder(ui)
     end)
     return best or folder
 end
+
 local function findWireDropTarget(ui, pair)
     local tangle = findActiveTangleFolder(ui)
     if not tangle then return nil end
+
     local wireName = pair.right:GetAttribute("WireName")
         or pair.rightDrag:GetAttribute("WireName")
         or (pair.rightDrag:FindFirstChild("Contact") and pair.rightDrag.Contact:GetAttribute("WireName"))
         or pair.left:GetAttribute("WireName")
+
     if wireName then
         local wire = findChild(tangle, wireName)
         local contact = wire and (findChild(wire, "Contact") or wire)
         if contact and guiRect(contact) then return contact end
     end
+
     -- Recursive search in active tangle
     pcall(function()
         for _, child in ipairs(tangle:GetDescendants()) do
@@ -1436,11 +1603,14 @@ local function findWireDropTarget(ui, pair)
             end
         end
     end)
+
     return nil
 end
+
 local function isWireConnected(ui, pair)
     local ok, c = pcall(function() return pair.leftDrag:GetAttribute("Connected") or pair.left:GetAttribute("Connected") end)
     if ok and c == true then return true end
+
     local lights = findChild(ui, "WireLights")
     local light = lights and findChild(lights, pair.color .. "Light")
     local base = light and findChild(light, "Base")
@@ -1452,6 +1622,7 @@ local function isWireConnected(ui, pair)
     end
     return false
 end
+
 local function stepConnectWires(menus, now)
     local ui = findChild(menus, "ConnectWires")
     if not ui or memVisible(ui) ~= true then
@@ -1462,11 +1633,13 @@ local function stepConnectWires(menus, now)
         wireState.done = {}
         return false
     end
+
     if not wireState.session then
         wireState.session = tostring(now)
         wireState.phase = "aim"
         wireState.done = {}
     end
+
     local lefts, rights = {}, {}
     for _, child in ipairs(ui:GetChildren()) do
         local color, side = wireSide(child.Name)
@@ -1476,6 +1649,7 @@ local function stepConnectWires(menus, now)
             else rights[color] = { frame = child, drag = drag } end
         end
     end
+
     local pair = nil
     for _, col in ipairs(WIRE_COLORS) do
         if lefts[col] and rights[col] then
@@ -1488,15 +1662,19 @@ local function stepConnectWires(menus, now)
             end
         end
     end
+
     if not pair then
         if wireState.held then pcall(mouse1release) wireState.held = false end
         return true
     end
+
     local dropInst = findWireDropTarget(ui, pair)
     local grab = guiRect(pair.leftDrag) or guiRect(pair.left)
     local drop = guiRect(dropInst)
+
     if not grab or not drop then return true end
     local aimX, aimY = drop.x + drop.w * 0.5, drop.y
+
     if wireState.phase == "aim" then
         local dist = moveMouseToward(grab.cx, grab.cy)
         if dist <= 10 then
@@ -1507,10 +1685,12 @@ local function stepConnectWires(menus, now)
         end
         return true
     end
+
     if wireState.phase == "hold" then
         if now - wireState.lastDone >= 0.05 then wireState.phase = "drag" end
         return true
     end
+
     local dist = moveMouseToward(aimX, aimY)
     if dist <= 10 then
         pcall(mouse1release)
@@ -1521,6 +1701,7 @@ local function stepConnectWires(menus, now)
     end
     return true
 end
+
 ----------------------------------------------------
 -- AUTOFARM RUNNER THREADS
 ----------------------------------------------------
@@ -1531,11 +1712,13 @@ task.spawn(function()
         task.wait(0.01)
     end
 end)
+
 if RunService then
     RunService.RenderStepped:Connect(function()
         pcall(stepGlassCut)
     end)
 end
+
 task.spawn(function()
     while true do
         local ok, menus = pcall(function()
@@ -1555,6 +1738,7 @@ task.spawn(function()
         task.wait(0.01)
     end
 end)
+
 ----------------------------------------------------
 -- ESP BACKGROUND THREADS
 ----------------------------------------------------
@@ -1570,12 +1754,14 @@ task.spawn(function()
         task.wait(0.5)
     end
 end)
+
 task.spawn(function()
     while true do
         pcall(updateVisuals)
         task.wait()
     end
 end)
+
 -- Alt key toggle for Master ESP
 local lastAltState = false
 task.spawn(function()
@@ -1593,6 +1779,7 @@ task.spawn(function()
         task.wait(0.05)
     end
 end)
+
 if notify then
     notify("ERLC Full ESP & Autos Ready\nUpdate #20", "ERLC ESP", 3)
 end
