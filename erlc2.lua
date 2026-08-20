@@ -1,10 +1,9 @@
--- ERLC Full ESP + Matcha UI + Modern Autofarms
--- Fixed: Offsets loader, modern ATM grid solver, lockpick, glass cut, crowbar, wires & numbers
+-- ERLC Full ESP + Matcha UI + Modern Autofarms (Update #20)
+-- Fixed: Full Hotwire suite (Timing Bar, Wires, Numbers Hack), TangledWires hierarchy, ATM & Lockpick
 local Players            = game:GetService("Players")
 local Workspace          = workspace or game:GetService("Workspace")
 local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local RunService         = game:GetService("RunService")
-local HttpService        = game:GetService("HttpService")
 local LocalPlayer        = Players.LocalPlayer
 local cam                = Workspace and Workspace.CurrentCamera
 ----------------------------------------------------
@@ -69,12 +68,10 @@ local cfg = {
         edgeMargin        = 50,
     },
     -- Autofarms
-    atm      = { enabled = false, delay = 50, latency = 0, predictive = false },
-    lockpick = { enabled = false, delay = 40, latency = 0, tolerance = 2 },
+    atm      = { enabled = false, delay = 50 },
+    lockpick = { enabled = false, delay = 40, tolerance = 2 },
     glasscut = { enabled = false, lead = 0 },
-    crowbar  = { enabled = false, delay = 50, latency = 0, margin = 25 },
-    wires    = { enabled = false, delay = 140 },
-    numbers  = { enabled = false, delay = 140 },
+    hotwire  = { enabled = false, delay = 50, latency = 0, margin = 25 },
     settings = {
         fontName    = "SystemBold",
         dynamicSize = 0,
@@ -309,29 +306,21 @@ UI.AddTab("ERLC ESP", function(tab)
     local auto = tab:Section("Autofarms", "Right")
     auto:Text("Minigame Autos")
     auto:Tip("Enable the ones you want. They run automatically when the minigame appears.")
-    auto:Toggle("auto_atm", "ATM Hack (Grid)", cfg.atm.enabled, function(v)
+    auto:Toggle("auto_atm", "Auto ATM (Grid)", cfg.atm.enabled, function(v)
         cfg.atm.enabled = v
         if notify then notify(v and "ATM Hack: ON" or "ATM Hack: OFF", "Autofarms", 2) end
     end)
-    auto:Toggle("auto_lockpick", "Lockpick", cfg.lockpick.enabled, function(v)
+    auto:Toggle("auto_lockpick", "Auto Lockpick", cfg.lockpick.enabled, function(v)
         cfg.lockpick.enabled = v
         if notify then notify(v and "Lockpick: ON" or "Lockpick: OFF", "Autofarms", 2) end
     end)
-    auto:Toggle("auto_glass", "Glass Cutting", cfg.glasscut.enabled, function(v)
+    auto:Toggle("auto_glass", "Auto Glass Cutting", cfg.glasscut.enabled, function(v)
         cfg.glasscut.enabled = v
         if notify then notify(v and "Glass Cutting: ON" or "Glass Cutting: OFF", "Autofarms", 2) end
     end)
-    auto:Toggle("auto_crowbar", "Crowbar (Timing Bar)", cfg.crowbar.enabled, function(v)
-        cfg.crowbar.enabled = v
-        if notify then notify(v and "Crowbar: ON" or "Crowbar: OFF", "Autofarms", 2) end
-    end)
-    auto:Toggle("auto_wires", "Wire Pairing", cfg.wires.enabled, function(v)
-        cfg.wires.enabled = v
-        if notify then notify(v and "Wire Pairing: ON" or "Wire Pairing: OFF", "Autofarms", 2) end
-    end)
-    auto:Toggle("auto_numbers", "Car Number Hack", cfg.numbers.enabled, function(v)
-        cfg.numbers.enabled = v
-        if notify then notify(v and "Car Number Hack: ON" or "Car Number Hack: OFF", "Autofarms", 2) end
+    auto:Toggle("auto_hotwire", "Auto Hotwire & Crowbar", cfg.hotwire.enabled, function(v)
+        cfg.hotwire.enabled = v
+        if notify then notify(v and "Auto Hotwire Suite: ON" or "Auto Hotwire Suite: OFF", "Autofarms", 2) end
     end)
     right:Spacing()
     right:Button("Reset Defaults", function()
@@ -350,16 +339,12 @@ UI.AddTab("ERLC ESP", function(tab)
         UI.SetValue("auto_atm", false)
         UI.SetValue("auto_lockpick", false)
         UI.SetValue("auto_glass", false)
-        UI.SetValue("auto_crowbar", false)
-        UI.SetValue("auto_wires", false)
-        UI.SetValue("auto_numbers", false)
+        UI.SetValue("auto_hotwire", false)
         cfg.masterEnabled     = true
         cfg.atm.enabled       = false
         cfg.lockpick.enabled  = false
         cfg.glasscut.enabled  = false
-        cfg.crowbar.enabled   = false
-        cfg.wires.enabled     = false
-        cfg.numbers.enabled   = false
+        cfg.hotwire.enabled   = false
         if notify then notify("Defaults restored", "ERLC ESP", 2) end
     end)
 end)
@@ -384,9 +369,7 @@ local function syncFromUI()
     cfg.atm.enabled      = g("auto_atm", cfg.atm.enabled)
     cfg.lockpick.enabled = g("auto_lockpick", cfg.lockpick.enabled)
     cfg.glasscut.enabled = g("auto_glass", cfg.glasscut.enabled)
-    cfg.crowbar.enabled  = g("auto_crowbar", cfg.crowbar.enabled)
-    cfg.wires.enabled    = g("auto_wires", cfg.wires.enabled)
-    cfg.numbers.enabled  = g("auto_numbers", cfg.numbers.enabled)
+    cfg.hotwire.enabled  = g("auto_hotwire", cfg.hotwire.enabled)
     local fontIdx = g("esp_font", 2)
     if type(fontIdx) == "number" and FONT_NAMES[fontIdx + 1] then
         cfg.settings.fontName = FONT_NAMES[fontIdx + 1]
@@ -1016,7 +999,7 @@ local function updateVisuals()
     end
 end
 ----------------------------------------------------
--- 1. ATM HACK (MODERN GRID + SELECTING CODE SOLVER)
+-- 1. ATM HACK (MODERN GRID SOLVER)
 ----------------------------------------------------
 local function looksLikeCode(text)
     if type(text) ~= "string" then return nil end
@@ -1247,8 +1230,9 @@ local function stepGlassCut()
     moveMouseToward(tx, ty)
 end
 ----------------------------------------------------
--- 4. CROWBAR TIMING BAR
+-- 4. HOTWIRE & CROWBAR SUITE (BAR, WIRES & NUMBERS)
 ----------------------------------------------------
+-- A. Timing Bar
 local crowBarState = { barX = nil, barT = 0, vel = 0, frameDt = nil, lastClick = 0 }
 local function stepCrowbarBar(menus, now)
     local crow = findChild(menus, "Crowbar")
@@ -1277,14 +1261,14 @@ local function stepCrowbarBar(menus, now)
         end
     end
     if math.abs(crowBarState.vel) < 5 then return true end
-    local latency = math.max((tonumber(cfg.crowbar.latency) or 50) / 1000, 0)
+    local latency = math.max((tonumber(cfg.hotwire.latency) or 50) / 1000, 0)
     local frameDt = math.min(crowBarState.frameDt or (1 / 60), 0.05)
-    local marginPct = math.min(math.max(tonumber(cfg.crowbar.margin) or 25, 0), 45) / 100
+    local marginPct = math.min(math.max(tonumber(cfg.hotwire.margin) or 25, 0), 45) / 100
     local inset = zoneRect.w * marginPct / 2
     local fromX = barRect.cx + crowBarState.vel * latency
     local toX = fromX + crowBarState.vel * frameDt
     local lo, hi = math.min(fromX, toX), math.max(fromX, toX)
-    local delay = math.max((tonumber(cfg.crowbar.delay) or 50) / 1000, 0.05)
+    local delay = math.max((tonumber(cfg.hotwire.delay) or 50) / 1000, 0.05)
     if now - crowBarState.lastClick >= delay then
         if lo <= zoneRect.x + zoneRect.w - inset and hi >= zoneRect.x + inset then
             pcall(mouse1click)
@@ -1293,9 +1277,7 @@ local function stepCrowbarBar(menus, now)
     end
     return true
 end
-----------------------------------------------------
--- 5. CAR NUMBER MINIGAME (NUMBERS HACK)
-----------------------------------------------------
+-- B. Numbers Hack
 local numHackState = {
     session = nil,
     seq = {},
@@ -1357,7 +1339,7 @@ local function stepNumbersHack(menus, now)
         end
         local btn = buttons and findChild(buttons, digit)
         if not btn then return true end
-        local delay = math.max((tonumber(cfg.numbers.delay) or 140) / 1000, 0.15)
+        local delay = 0.16
         if now - numHackState.lastClick >= delay then
             if select(1, clickAtGui(btn, 14)) then
                 numHackState.lastClick = now
@@ -1405,14 +1387,70 @@ local function stepNumbersHack(menus, now)
     end
     return true
 end
-----------------------------------------------------
--- 6. WIRE PAIRING (CONNECT WIRES)
-----------------------------------------------------
+-- C. Wire Pairing (Connect Wires Solver)
 local WIRE_COLORS = { "Blue", "Green", "Red", "Yellow" }
 local wireState = { session = nil, phase = "aim", held = false, lastDone = 0, releasedAt = 0, nearSince = 0, currentColor = nil, done = {} }
 local function wireSide(name)
-    if type(name) ~= "string" then return nil end
+    if type(name) ~= "string" then return nil, nil end
     return name:match("^(%a+)Wire([LR])$")
+end
+local function findActiveTangleFolder(ui)
+    local folder = findChild(ui, "TangledWires")
+    if not folder then return nil end
+    local best, bestArea = nil, 0
+    pcall(function()
+        for _, child in ipairs(folder:GetChildren()) do
+            if memVisible(child) ~= false then
+                local w, h = memAbsSize(child)
+                if w and h and w > 40 and h > 40 then
+                    local area = w * h
+                    if area > bestArea then
+                        best, bestArea = child, area
+                    end
+                end
+            end
+        end
+    end)
+    return best or folder
+end
+local function findWireDropTarget(ui, pair)
+    local tangle = findActiveTangleFolder(ui)
+    if not tangle then return nil end
+    local wireName = pair.right:GetAttribute("WireName")
+        or pair.rightDrag:GetAttribute("WireName")
+        or (pair.rightDrag:FindFirstChild("Contact") and pair.rightDrag.Contact:GetAttribute("WireName"))
+        or pair.left:GetAttribute("WireName")
+    if wireName then
+        local wire = findChild(tangle, wireName)
+        local contact = wire and (findChild(wire, "Contact") or wire)
+        if contact and guiRect(contact) then return contact end
+    end
+    -- Recursive search in active tangle
+    pcall(function()
+        for _, child in ipairs(tangle:GetDescendants()) do
+            if wireName and child.Name == wireName then
+                local contact = findChild(child, "Contact") or child
+                if contact and guiRect(contact) then
+                    return contact
+                end
+            end
+        end
+    end)
+    return nil
+end
+local function isWireConnected(ui, pair)
+    local ok, c = pcall(function() return pair.leftDrag:GetAttribute("Connected") or pair.left:GetAttribute("Connected") end)
+    if ok and c == true then return true end
+    local lights = findChild(ui, "WireLights")
+    local light = lights and findChild(lights, pair.color .. "Light")
+    local base = light and findChild(light, "Base")
+    local inner = base and (findChild(base, "InnerCircle") or base)
+    local lightDot = inner and (findChild(inner, "Light") or inner)
+    if lightDot then
+        local r, g, b = memColorRGB(lightDot)
+        return r > 0.8 and g > 0.8 and b > 0.8
+    end
+    return false
 end
 local function stepConnectWires(menus, now)
     local ui = findChild(menus, "ConnectWires")
@@ -1438,27 +1476,30 @@ local function stepConnectWires(menus, now)
             else rights[color] = { frame = child, drag = drag } end
         end
     end
-    local tangle = findChild(ui, "TangledWires")
     local pair = nil
     for _, col in ipairs(WIRE_COLORS) do
-        if lefts[col] and rights[col] and not wireState.done[col] then
-            pair = { color = col, left = lefts[col].frame, right = rights[col].frame, leftDrag = lefts[col].drag, rightDrag = rights[col].drag }
-            break
+        if lefts[col] and rights[col] then
+            local p = { color = col, left = lefts[col].frame, right = rights[col].frame, leftDrag = lefts[col].drag, rightDrag = rights[col].drag }
+            if isWireConnected(ui, p) then
+                wireState.done[col] = true
+            elseif not wireState.done[col] then
+                pair = p
+                break
+            end
         end
     end
     if not pair then
         if wireState.held then pcall(mouse1release) wireState.held = false end
         return true
     end
-    local wireName = pair.right:GetAttribute("WireName") or pair.rightDrag:GetAttribute("WireName")
-    local dropInst = tangle and wireName and findChild(tangle, wireName) and findChild(findChild(tangle, wireName), "Contact")
-    local grab = guiRect(pair.left) or guiRect(pair.leftDrag)
+    local dropInst = findWireDropTarget(ui, pair)
+    local grab = guiRect(pair.leftDrag) or guiRect(pair.left)
     local drop = guiRect(dropInst)
     if not grab or not drop then return true end
     local aimX, aimY = drop.x + drop.w * 0.5, drop.y
     if wireState.phase == "aim" then
         local dist = moveMouseToward(grab.cx, grab.cy)
-        if dist <= 8 then
+        if dist <= 10 then
             pcall(mouse1press)
             wireState.held = true
             wireState.phase = "hold"
@@ -1467,16 +1508,16 @@ local function stepConnectWires(menus, now)
         return true
     end
     if wireState.phase == "hold" then
-        if now - wireState.lastDone >= 0.08 then wireState.phase = "drag" end
+        if now - wireState.lastDone >= 0.05 then wireState.phase = "drag" end
         return true
     end
     local dist = moveMouseToward(aimX, aimY)
-    if dist <= 8 then
+    if dist <= 10 then
         pcall(mouse1release)
         wireState.held = false
-        wireState.done[pair.color] = true
         wireState.phase = "aim"
         wireState.lastDone = now
+        task.wait(0.1)
     end
     return true
 end
@@ -1501,16 +1542,14 @@ task.spawn(function()
             local pg = getPlayerGui()
             return pg and findChild(pg, "GameMenus")
         end)
-        if ok and menus then
+        if ok and menus and cfg.hotwire.enabled then
             local now = os.clock()
-            if cfg.crowbar.enabled then
-                pcall(stepCrowbarBar, menus, now)
-            end
-            if cfg.numbers.enabled then
+            if memVisible(findChild(menus, "NumbersHack")) == true then
                 pcall(stepNumbersHack, menus, now)
-            end
-            if cfg.wires.enabled then
+            elseif memVisible(findChild(menus, "ConnectWires")) == true then
                 pcall(stepConnectWires, menus, now)
+            else
+                pcall(stepCrowbarBar, menus, now)
             end
         end
         task.wait(0.01)
@@ -1555,6 +1594,6 @@ task.spawn(function()
     end
 end)
 if notify then
-    notify("ERLC Full ESP & Autos Ready", "ERLC ESP", 3)
+    notify("ERLC Full ESP & Autos Ready\nUpdate #20", "ERLC ESP", 3)
 end
-print("ERLC Full ESP + Autos loaded successfully!")
+print("ERLC Full ESP + Hotwire Suite loaded successfully!")
