@@ -1,6 +1,6 @@
 -- ERLC Full ESP + INSUI + Modern Autofarms (Update #20)
 -- Fixed: Full Hotwire suite (Timing Bar, Wires, Numbers Hack), TangledWires hierarchy, ATM & Lockpick
--- UI converted from Matcha → INSUI
+-- UI converted from Matcha → INSUI (corrected Slider signature + Notify order)
 
 local Players            = game:GetService("Players")
 local Workspace          = workspace or game:GetService("Workspace")
@@ -103,10 +103,6 @@ local FONT_MAP = {
 
 local function getEspFont()
     return FONT_MAP[cfg.settings.fontName] or Drawing.Fonts.SystemBold
-end
-
-local function colToRGB(c)
-    return c.R, c.G, c.B, 1
 end
 
 ----------------------------------------------------
@@ -305,39 +301,40 @@ local function clickAtGui(inst, maxDist)
 end
 
 ----------------------------------------------------
--- INSUI WINDOW + TABS
+-- INSUI WINDOW + TABS  (CORRECTED)
 ----------------------------------------------------
 local win = Lib:CreateWindow({
-    title        = "ERLC ESP",
-    subtitle     = "Update #20",
-    size         = Vector2.new(620, 520),
-    menuKey      = "p",
-    theme        = { accent = Color3.fromRGB(122, 134, 255) },
-    accentA      = Color3.fromRGB(122, 134, 255),
-    accentB      = Color3.fromRGB(189, 130, 255),
-    font         = "Proxima",
-    opacity      = 0.96,
-    rounding     = 1.2,
-    rowLines     = true,
+    title         = "ERLC ESP",
+    subtitle      = "Update #20",
+    size          = Vector2.new(640, 540),
+    menuKey       = "p",
+    theme         = { accent = Color3.fromRGB(122, 134, 255) },
+    accentA       = Color3.fromRGB(122, 134, 255),
+    accentB       = Color3.fromRGB(189, 130, 255),
+    font          = "Proxima",
+    opacity       = 0.97,
+    rounding      = 1.2,
+    rowLines      = true,
     checkboxStyle = true,
-    configName   = "ERLC_ESP",
-    configFolder = "ERLC_ESP",
-    autoSave     = true,
-    smartFps     = true,
-    startOpen    = true,
+    configName    = "ERLC_ESP",
+    configFolder  = "ERLC_ESP",
+    autoSave      = true,
+    smartFps      = true,
+    startOpen     = true,
 })
 
 -- ── Main ESP Tab ──────────────────────────────────
 local tab = win:Tab("ESP", "eye")
 
--- Left column: Core ESP
+-- Left column
 local left = tab:Section("ESP", "Left")
 
 left:Toggle("Master Enabled", cfg.masterEnabled, function(v)
     cfg.masterEnabled = v
 end)
 
-left:Slider("Max Distance", cfg.settings.maxDistance, 100, 10000, "studs", function(v)
+-- CRITICAL: correct order is (name, value, step, min, max, suffix, callback)
+left:Slider("Max Distance", cfg.settings.maxDistance, 50, 100, 10000, "studs", function(v)
     cfg.settings.maxDistance = v
 end)
 
@@ -365,7 +362,7 @@ end):AddColorpicker("Deployable Color", cfg.deployable.color, function(c)
     cfg.deployable.color = c
 end)
 
--- Right column: Vehicles / Helicopter
+-- Right column
 local right = tab:Section("Vehicles / Heli", "Right")
 
 right:Toggle("Bounty Vehicles", cfg.bountyVehicle.enabled, function(v)
@@ -416,49 +413,47 @@ autoLeft:Info("Enable the ones you want. They run automatically when the corresp
 
 autoLeft:Toggle("Auto ATM (Grid)", cfg.atm.enabled, function(v)
     cfg.atm.enabled = v
-    Lib:Notify(v and "ATM Hack: ON" or "ATM Hack: OFF", "Autofarms", 2, v and "success" or "info")
+    Lib:Notify("Autofarms", v and "ATM Hack: ON" or "ATM Hack: OFF", 2, v and "success" or "info")
 end)
 
 autoLeft:Toggle("Auto Lockpick", cfg.lockpick.enabled, function(v)
     cfg.lockpick.enabled = v
-    Lib:Notify(v and "Lockpick: ON" or "Lockpick: OFF", "Autofarms", 2, v and "success" or "info")
+    Lib:Notify("Autofarms", v and "Lockpick: ON" or "Lockpick: OFF", 2, v and "success" or "info")
 end)
 
 autoLeft:Toggle("Auto Glass Cutting", cfg.glasscut.enabled, function(v)
     cfg.glasscut.enabled = v
-    Lib:Notify(v and "Glass Cutting: ON" or "Glass Cutting: OFF", "Autofarms", 2, v and "success" or "info")
+    Lib:Notify("Autofarms", v and "Glass Cutting: ON" or "Glass Cutting: OFF", 2, v and "success" or "info")
 end)
 
 autoLeft:Toggle("Auto Hotwire & Crowbar", cfg.hotwire.enabled, function(v)
     cfg.hotwire.enabled = v
-    Lib:Notify(v and "Auto Hotwire Suite: ON" or "Auto Hotwire Suite: OFF", "Autofarms", 2, v and "success" or "info")
+    Lib:Notify("Autofarms", v and "Auto Hotwire Suite: ON" or "Auto Hotwire Suite: OFF", 2, v and "success" or "info")
 end)
 
 local autoRight = autoTab:Section("Actions", "Right")
 autoRight:Button("Reset Defaults", function()
-    cfg.masterEnabled     = true
-    cfg.criminal.enabled  = true
-    cfg.panic.enabled     = true
-    cfg.deployable.enabled = true
-    cfg.bountyVehicle.enabled = true
-    cfg.stolenVehicle.enabled = true
-    cfg.stolenVehicle.showPrice = true
-    cfg.personalVehicle.enabled = true
-    cfg.vehicleHealth.enabled = true
-    cfg.helicopter.enabled = true
+    cfg.masterEnabled            = true
+    cfg.criminal.enabled         = true
+    cfg.panic.enabled            = true
+    cfg.deployable.enabled       = true
+    cfg.bountyVehicle.enabled    = true
+    cfg.stolenVehicle.enabled    = true
+    cfg.stolenVehicle.showPrice  = true
+    cfg.personalVehicle.enabled  = true
+    cfg.vehicleHealth.enabled    = true
+    cfg.helicopter.enabled       = true
     cfg.helicopter.showSpotlight = true
-    cfg.settings.maxDistance = 5000
+    cfg.settings.maxDistance     = 5000
 
     cfg.atm.enabled      = false
     cfg.lockpick.enabled = false
     cfg.glasscut.enabled = false
     cfg.hotwire.enabled  = false
 
-    -- Force UI to match (INSUI will pick up the next Get/Set if needed)
-    Lib:Notify("Defaults restored", "ERLC ESP", 2, "success")
+    Lib:Notify("ERLC ESP", "Defaults restored", 2, "success")
 end)
 
--- Optional built-in settings tab
 win:AddSettingsTab("cog")
 
 ----------------------------------------------------
@@ -1637,7 +1632,6 @@ local function findWireDropTarget(ui, pair)
         if contact and guiRect(contact) then return contact end
     end
 
-    -- Recursive search in active tangle
     pcall(function()
         for _, child in ipairs(tangle:GetDescendants()) do
             if wireName and child.Name == wireName then
@@ -1815,7 +1809,7 @@ task.spawn(function()
             if altPressed and not lastAltState then
                 local newState = not cfg.masterEnabled
                 cfg.masterEnabled = newState
-                Lib:Notify(newState and "ESP: ON" or "ESP: OFF", "ERLC ESP", 2, newState and "success" or "info")
+                Lib:Notify("ERLC ESP", newState and "ESP: ON" or "ESP: OFF", 2, newState and "success" or "info")
             end
             lastAltState = altPressed
         end
@@ -1823,5 +1817,5 @@ task.spawn(function()
     end
 end)
 
-Lib:Notify("ERLC Full ESP & Autos Ready\nUpdate #20 (INSUI)", "ERLC ESP", 3, "success")
+Lib:Notify("ERLC ESP", "Full ESP & Autos Ready\nUpdate #20 (INSUI)", 3, "success")
 print("ERLC Full ESP + Hotwire Suite loaded successfully (INSUI)!")
