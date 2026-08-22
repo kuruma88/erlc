@@ -307,7 +307,7 @@ local win = Lib:CreateWindow({
     title         = "ERLC ESP",
     subtitle      = "Update #20",
     size          = Vector2.new(640, 540),
-    menuKey       = "p",
+    menuKey       = "k",
     theme         = { accent = Color3.fromRGB(122, 134, 255) },
     accentA       = Color3.fromRGB(122, 134, 255),
     accentB       = Color3.fromRGB(189, 130, 255),
