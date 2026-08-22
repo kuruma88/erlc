@@ -1,5 +1,6 @@
--- ERLC Full ESP + Matcha UI + Modern Autofarms (Update #20)
+-- ERLC Full ESP + INSUI + Modern Autofarms (Update #20)
 -- Fixed: Full Hotwire suite (Timing Bar, Wires, Numbers Hack), TangledWires hierarchy, ATM & Lockpick
+-- UI converted from Matcha → INSUI
 
 local Players            = game:GetService("Players")
 local Workspace          = workspace or game:GetService("Workspace")
@@ -7,6 +8,11 @@ local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local RunService         = game:GetService("RunService")
 local LocalPlayer        = Players.LocalPlayer
 local cam                = Workspace and Workspace.CurrentCamera
+
+----------------------------------------------------
+-- LOAD INSUI
+----------------------------------------------------
+local Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/neaxusxgod-png/INS-ui/main/uilib.min.lua"))() or INSUI
 
 ----------------------------------------------------
 -- CONFIG
@@ -299,120 +305,161 @@ local function clickAtGui(inst, maxDist)
 end
 
 ----------------------------------------------------
--- MATCHA UI TABS
+-- INSUI WINDOW + TABS
 ----------------------------------------------------
-UI.AddTab("ERLC ESP", function(tab)
-    -- Left: ESP
-    local left = tab:Section("ESP", "Left")
-    left:Toggle("esp_master", "Master Enabled", cfg.masterEnabled, function(v) cfg.masterEnabled = v end)
-    left:SliderInt("esp_maxdist", "Max Distance", 100, 10000, cfg.settings.maxDistance, function(v) cfg.settings.maxDistance = v end)
-    left:Combo("esp_font", "Font", FONT_NAMES, 2, function(idx, text) cfg.settings.fontName = text end)
-    left:Spacing()
-    left:Toggle("esp_criminal", "Criminal", cfg.criminal.enabled, function(v) cfg.criminal.enabled = v end)
-    left:ColorPicker("esp_criminal_col", colToRGB(cfg.criminal.color), function(c) cfg.criminal.color = c end)
-    left:Toggle("esp_panic", "Panic", cfg.panic.enabled, function(v) cfg.panic.enabled = v end)
-    left:ColorPicker("esp_panic_col", colToRGB(cfg.panic.color), function(c) cfg.panic.color = c end)
-    left:Toggle("esp_deploy", "Deployables", cfg.deployable.enabled, function(v) cfg.deployable.enabled = v end)
-    left:ColorPicker("esp_deploy_col", colToRGB(cfg.deployable.color), function(c) cfg.deployable.color = c end)
+local win = Lib:CreateWindow({
+    title        = "ERLC ESP",
+    subtitle     = "Update #20",
+    size         = Vector2.new(620, 520),
+    menuKey      = "p",
+    theme        = { accent = Color3.fromRGB(122, 134, 255) },
+    accentA      = Color3.fromRGB(122, 134, 255),
+    accentB      = Color3.fromRGB(189, 130, 255),
+    font         = "Proxima",
+    opacity      = 0.96,
+    rounding     = 1.2,
+    rowLines     = true,
+    checkboxStyle = true,
+    configName   = "ERLC_ESP",
+    configFolder = "ERLC_ESP",
+    autoSave     = true,
+    smartFps     = true,
+    startOpen    = true,
+})
 
-    -- Right: Vehicles
-    local right = tab:Section("Vehicles / Heli", "Right")
-    right:Toggle("esp_bounty", "Bounty Vehicles", cfg.bountyVehicle.enabled, function(v) cfg.bountyVehicle.enabled = v end)
-    right:ColorPicker("esp_bounty_col", colToRGB(cfg.bountyVehicle.color), function(c) cfg.bountyVehicle.color = c end)
-    right:Toggle("esp_stolen", "Stolen Vehicles", cfg.stolenVehicle.enabled, function(v) cfg.stolenVehicle.enabled = v end)
-    right:ColorPicker("esp_stolen_col", colToRGB(cfg.stolenVehicle.color), function(c) cfg.stolenVehicle.color = c end)
-    right:Toggle("esp_stolen_price", "Show Price", cfg.stolenVehicle.showPrice, function(v) cfg.stolenVehicle.showPrice = v end)
-    right:ColorPicker("esp_stolen_pricecol", colToRGB(cfg.stolenVehicle.priceColor), function(c) cfg.stolenVehicle.priceColor = c end)
-    right:Toggle("esp_personal", "Personal Vehicle", cfg.personalVehicle.enabled, function(v) cfg.personalVehicle.enabled = v end)
-    right:ColorPicker("esp_personal_col", colToRGB(cfg.personalVehicle.color), function(c) cfg.personalVehicle.color = c end)
-    right:Toggle("esp_vhealth", "Vehicle Health (on damage)", cfg.vehicleHealth.enabled, function(v) cfg.vehicleHealth.enabled = v end)
-    right:Toggle("esp_heli", "Helicopter", cfg.helicopter.enabled, function(v) cfg.helicopter.enabled = v end)
-    right:ColorPicker("esp_heli_col", colToRGB(cfg.helicopter.color), function(c) cfg.helicopter.color = c end)
-    right:Toggle("esp_heli_spotlight", "Show Spotlighted", cfg.helicopter.showSpotlight, function(v) cfg.helicopter.showSpotlight = v end)
-    right:ColorPicker("esp_heli_spotcol", colToRGB(cfg.helicopter.spotlightColor), function(c) cfg.helicopter.spotlightColor = c end)
+-- ── Main ESP Tab ──────────────────────────────────
+local tab = win:Tab("ESP", "eye")
 
-    -- Autofarms Section
-    local auto = tab:Section("Autofarms", "Right")
-    auto:Text("Minigame Autos")
-    auto:Tip("Enable the ones you want. They run automatically when the minigame appears.")
+-- Left column: Core ESP
+local left = tab:Section("ESP", "Left")
 
-    auto:Toggle("auto_atm", "Auto ATM (Grid)", cfg.atm.enabled, function(v)
-        cfg.atm.enabled = v
-        if notify then notify(v and "ATM Hack: ON" or "ATM Hack: OFF", "Autofarms", 2) end
-    end)
-    auto:Toggle("auto_lockpick", "Auto Lockpick", cfg.lockpick.enabled, function(v)
-        cfg.lockpick.enabled = v
-        if notify then notify(v and "Lockpick: ON" or "Lockpick: OFF", "Autofarms", 2) end
-    end)
-    auto:Toggle("auto_glass", "Auto Glass Cutting", cfg.glasscut.enabled, function(v)
-        cfg.glasscut.enabled = v
-        if notify then notify(v and "Glass Cutting: ON" or "Glass Cutting: OFF", "Autofarms", 2) end
-    end)
-    auto:Toggle("auto_hotwire", "Auto Hotwire & Crowbar", cfg.hotwire.enabled, function(v)
-        cfg.hotwire.enabled = v
-        if notify then notify(v and "Auto Hotwire Suite: ON" or "Auto Hotwire Suite: OFF", "Autofarms", 2) end
-    end)
-
-    right:Spacing()
-    right:Button("Reset Defaults", function()
-        UI.SetValue("esp_master", true)
-        UI.SetValue("esp_criminal", true)
-        UI.SetValue("esp_panic", true)
-        UI.SetValue("esp_deploy", true)
-        UI.SetValue("esp_bounty", true)
-        UI.SetValue("esp_stolen", true)
-        UI.SetValue("esp_stolen_price", true)
-        UI.SetValue("esp_personal", true)
-        UI.SetValue("esp_vhealth", true)
-        UI.SetValue("esp_heli", true)
-        UI.SetValue("esp_heli_spotlight", true)
-        UI.SetValue("esp_maxdist", 5000)
-
-        UI.SetValue("auto_atm", false)
-        UI.SetValue("auto_lockpick", false)
-        UI.SetValue("auto_glass", false)
-        UI.SetValue("auto_hotwire", false)
-
-        cfg.masterEnabled     = true
-        cfg.atm.enabled       = false
-        cfg.lockpick.enabled  = false
-        cfg.glasscut.enabled  = false
-        cfg.hotwire.enabled   = false
-
-        if notify then notify("Defaults restored", "ERLC ESP", 2) end
-    end)
+left:Toggle("Master Enabled", cfg.masterEnabled, function(v)
+    cfg.masterEnabled = v
 end)
 
-local function syncFromUI()
-    local function g(id, fallback)
-        local v = UI.GetValue(id)
-        if v == nil then return fallback end
-        return v
-    end
+left:Slider("Max Distance", cfg.settings.maxDistance, 100, 10000, "studs", function(v)
+    cfg.settings.maxDistance = v
+end)
 
-    cfg.masterEnabled           = g("esp_master", cfg.masterEnabled)
-    cfg.criminal.enabled        = g("esp_criminal", cfg.criminal.enabled)
-    cfg.panic.enabled           = g("esp_panic", cfg.panic.enabled)
-    cfg.deployable.enabled      = g("esp_deploy", cfg.deployable.enabled)
-    cfg.bountyVehicle.enabled   = g("esp_bounty", cfg.bountyVehicle.enabled)
-    cfg.stolenVehicle.enabled   = g("esp_stolen", cfg.stolenVehicle.enabled)
-    cfg.stolenVehicle.showPrice = g("esp_stolen_price", cfg.stolenVehicle.showPrice)
-    cfg.personalVehicle.enabled = g("esp_personal", cfg.personalVehicle.enabled)
-    cfg.vehicleHealth.enabled   = g("esp_vhealth", cfg.vehicleHealth.enabled)
-    cfg.helicopter.enabled      = g("esp_heli", cfg.helicopter.enabled)
-    cfg.helicopter.showSpotlight= g("esp_heli_spotlight", cfg.helicopter.showSpotlight)
-    cfg.settings.maxDistance    = g("esp_maxdist", cfg.settings.maxDistance)
+left:Dropdown("Font", {cfg.settings.fontName}, FONT_NAMES, false, function(v)
+    cfg.settings.fontName = v
+end)
 
-    cfg.atm.enabled      = g("auto_atm", cfg.atm.enabled)
-    cfg.lockpick.enabled = g("auto_lockpick", cfg.lockpick.enabled)
-    cfg.glasscut.enabled = g("auto_glass", cfg.glasscut.enabled)
-    cfg.hotwire.enabled  = g("auto_hotwire", cfg.hotwire.enabled)
+left:Divider("Labels")
 
-    local fontIdx = g("esp_font", 2)
-    if type(fontIdx) == "number" and FONT_NAMES[fontIdx + 1] then
-        cfg.settings.fontName = FONT_NAMES[fontIdx + 1]
-    end
-end
+left:Toggle("Criminal", cfg.criminal.enabled, function(v)
+    cfg.criminal.enabled = v
+end):AddColorpicker("Criminal Color", cfg.criminal.color, function(c)
+    cfg.criminal.color = c
+end)
+
+left:Toggle("Panic", cfg.panic.enabled, function(v)
+    cfg.panic.enabled = v
+end):AddColorpicker("Panic Color", cfg.panic.color, function(c)
+    cfg.panic.color = c
+end)
+
+left:Toggle("Deployables", cfg.deployable.enabled, function(v)
+    cfg.deployable.enabled = v
+end):AddColorpicker("Deployable Color", cfg.deployable.color, function(c)
+    cfg.deployable.color = c
+end)
+
+-- Right column: Vehicles / Helicopter
+local right = tab:Section("Vehicles / Heli", "Right")
+
+right:Toggle("Bounty Vehicles", cfg.bountyVehicle.enabled, function(v)
+    cfg.bountyVehicle.enabled = v
+end):AddColorpicker("Bounty Color", cfg.bountyVehicle.color, function(c)
+    cfg.bountyVehicle.color = c
+end)
+
+right:Toggle("Stolen Vehicles", cfg.stolenVehicle.enabled, function(v)
+    cfg.stolenVehicle.enabled = v
+end):AddColorpicker("Stolen Color", cfg.stolenVehicle.color, function(c)
+    cfg.stolenVehicle.color = c
+end)
+
+right:Toggle("Show Price", cfg.stolenVehicle.showPrice, function(v)
+    cfg.stolenVehicle.showPrice = v
+end):AddColorpicker("Price Color", cfg.stolenVehicle.priceColor, function(c)
+    cfg.stolenVehicle.priceColor = c
+end)
+
+right:Toggle("Personal Vehicle", cfg.personalVehicle.enabled, function(v)
+    cfg.personalVehicle.enabled = v
+end):AddColorpicker("Personal Color", cfg.personalVehicle.color, function(c)
+    cfg.personalVehicle.color = c
+end)
+
+right:Toggle("Vehicle Health (on damage)", cfg.vehicleHealth.enabled, function(v)
+    cfg.vehicleHealth.enabled = v
+end)
+
+right:Toggle("Helicopter", cfg.helicopter.enabled, function(v)
+    cfg.helicopter.enabled = v
+end):AddColorpicker("Heli Color", cfg.helicopter.color, function(c)
+    cfg.helicopter.color = c
+end)
+
+right:Toggle("Show Spotlighted", cfg.helicopter.showSpotlight, function(v)
+    cfg.helicopter.showSpotlight = v
+end):AddColorpicker("Spotlight Color", cfg.helicopter.spotlightColor, function(c)
+    cfg.helicopter.spotlightColor = c
+end)
+
+-- ── Autofarms Tab ─────────────────────────────────
+local autoTab = win:Tab("Autofarms", "zap")
+
+local autoLeft = autoTab:Section("Minigame Autos", "Left")
+autoLeft:Info("Enable the ones you want. They run automatically when the corresponding minigame appears.")
+
+autoLeft:Toggle("Auto ATM (Grid)", cfg.atm.enabled, function(v)
+    cfg.atm.enabled = v
+    Lib:Notify(v and "ATM Hack: ON" or "ATM Hack: OFF", "Autofarms", 2, v and "success" or "info")
+end)
+
+autoLeft:Toggle("Auto Lockpick", cfg.lockpick.enabled, function(v)
+    cfg.lockpick.enabled = v
+    Lib:Notify(v and "Lockpick: ON" or "Lockpick: OFF", "Autofarms", 2, v and "success" or "info")
+end)
+
+autoLeft:Toggle("Auto Glass Cutting", cfg.glasscut.enabled, function(v)
+    cfg.glasscut.enabled = v
+    Lib:Notify(v and "Glass Cutting: ON" or "Glass Cutting: OFF", "Autofarms", 2, v and "success" or "info")
+end)
+
+autoLeft:Toggle("Auto Hotwire & Crowbar", cfg.hotwire.enabled, function(v)
+    cfg.hotwire.enabled = v
+    Lib:Notify(v and "Auto Hotwire Suite: ON" or "Auto Hotwire Suite: OFF", "Autofarms", 2, v and "success" or "info")
+end)
+
+local autoRight = autoTab:Section("Actions", "Right")
+autoRight:Button("Reset Defaults", function()
+    cfg.masterEnabled     = true
+    cfg.criminal.enabled  = true
+    cfg.panic.enabled     = true
+    cfg.deployable.enabled = true
+    cfg.bountyVehicle.enabled = true
+    cfg.stolenVehicle.enabled = true
+    cfg.stolenVehicle.showPrice = true
+    cfg.personalVehicle.enabled = true
+    cfg.vehicleHealth.enabled = true
+    cfg.helicopter.enabled = true
+    cfg.helicopter.showSpotlight = true
+    cfg.settings.maxDistance = 5000
+
+    cfg.atm.enabled      = false
+    cfg.lockpick.enabled = false
+    cfg.glasscut.enabled = false
+    cfg.hotwire.enabled  = false
+
+    -- Force UI to match (INSUI will pick up the next Get/Set if needed)
+    Lib:Notify("Defaults restored", "ERLC ESP", 2, "success")
+end)
+
+-- Optional built-in settings tab
+win:AddSettingsTab("cog")
 
 ----------------------------------------------------
 -- ESP LISTS & DRAWING ROUTINES
@@ -916,8 +963,6 @@ local function updateVehicleHealthVisual(localPos, maxDist)
 end
 
 local function updateVisuals()
-    syncFromUI()
-
     if not cfg.masterEnabled then
         for _, list in ipairs({criminalList, panicList, deployableList, bountyList, stolenList, personalList}) do
             for _, e in ipairs(list) do hideEntry(e) end
@@ -1744,7 +1789,6 @@ end)
 ----------------------------------------------------
 task.spawn(function()
     while true do
-        pcall(syncFromUI)
         pcall(updateCriminalCache)
         pcall(updatePanicCache)
         pcall(updateDeployableCache)
@@ -1771,8 +1815,7 @@ task.spawn(function()
             if altPressed and not lastAltState then
                 local newState = not cfg.masterEnabled
                 cfg.masterEnabled = newState
-                pcall(function() UI.SetValue("esp_master", newState) end)
-                if notify then notify(newState and "ESP: ON" or "ESP: OFF", "ERLC ESP", 2) end
+                Lib:Notify(newState and "ESP: ON" or "ESP: OFF", "ERLC ESP", 2, newState and "success" or "info")
             end
             lastAltState = altPressed
         end
@@ -1780,7 +1823,5 @@ task.spawn(function()
     end
 end)
 
-if notify then
-    notify("ERLC Full ESP & Autos Ready\nUpdate #20", "ERLC ESP", 3)
-end
-print("ERLC Full ESP + Hotwire Suite loaded successfully!")
+Lib:Notify("ERLC Full ESP & Autos Ready\nUpdate #20 (INSUI)", "ERLC ESP", 3, "success")
+print("ERLC Full ESP + Hotwire Suite loaded successfully (INSUI)!")
