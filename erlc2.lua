@@ -1,6 +1,6 @@
--- ERLC Full ESP + INSUI + Modern Autofarms (Update #20)
+-- ERLC Full ESP + NonUI + Modern Autofarms (Update #21)
 -- Fixed: Full Hotwire suite (Timing Bar, Wires, Numbers Hack), TangledWires hierarchy, ATM & Lockpick
--- UI converted from Matcha → INSUI (corrected Slider signature + Notify order)
+-- UI converted from INSUI → NonUI
 
 local Players            = game:GetService("Players")
 local Workspace          = workspace or game:GetService("Workspace")
@@ -10,9 +10,9 @@ local LocalPlayer        = Players.LocalPlayer
 local cam                = Workspace and Workspace.CurrentCamera
 
 ----------------------------------------------------
--- LOAD INSUI
+-- LOAD NonUI
 ----------------------------------------------------
-local Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/neaxusxgod-png/INS-ui/main/uilib.min.lua"))() or INSUI
+local Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/neaxusxgod-png/NonUI/main/NonUI.lua"))() or NonUI
 
 ----------------------------------------------------
 -- CONFIG
@@ -301,160 +301,234 @@ local function clickAtGui(inst, maxDist)
 end
 
 ----------------------------------------------------
--- INSUI WINDOW + TABS  (CORRECTED)
+-- NonUI WINDOW + TABS
 ----------------------------------------------------
+local function notify(title, content, duration)
+    Lib:Notify({
+        Title    = title or "ERLC ESP",
+        Content  = content or "",
+        Duration = duration or 2,
+    })
+end
+
 local win = Lib:CreateWindow({
-    title         = "ERLC ESP",
-    subtitle      = "Update #20",
-    size          = Vector2.new(640, 540),
-    menuKey       = "k",
-    theme         = { accent = Color3.fromRGB(122, 134, 255) },
-    accentA       = Color3.fromRGB(122, 134, 255),
-    accentB       = Color3.fromRGB(189, 130, 255),
-    font          = "Proxima",
-    opacity       = 0.97,
-    rounding      = 1.2,
-    rowLines      = true,
-    checkboxStyle = true,
-    configName    = "ERLC_ESP",
-    configFolder  = "ERLC_ESP",
-    autoSave      = true,
-    smartFps      = true,
-    startOpen     = true,
+    Title     = "ERLC ESP",
+    Author    = "Update #21",
+    Size      = { 640, 540 },
+    ToggleKey = "k",
+    Theme     = "Indigo",
 })
 
 -- ── Main ESP Tab ──────────────────────────────────
-local tab = win:Tab("ESP", "eye")
+local tab = win:Tab({ Title = "ESP", Icon = "eye" })
 
--- Left column
-local left = tab:Section("ESP", "Left")
+tab:Section({ Title = "General" })
 
-left:Toggle("Master Enabled", cfg.masterEnabled, function(v)
-    cfg.masterEnabled = v
-end)
+tab:Toggle({
+    Title    = "Master Enabled",
+    Value    = cfg.masterEnabled,
+    Callback = function(v) cfg.masterEnabled = v end,
+})
 
--- CRITICAL: correct order is (name, value, step, min, max, suffix, callback)
-left:Slider("Max Distance", cfg.settings.maxDistance, 50, 100, 10000, "studs", function(v)
-    cfg.settings.maxDistance = v
-end)
+tab:Slider({
+    Title    = "Max Distance",
+    Default  = cfg.settings.maxDistance,
+    Min      = 100,
+    Max      = 10000,
+    Step     = 50,
+    Suffix   = " studs",
+    Callback = function(v) cfg.settings.maxDistance = v end,
+})
 
-left:Dropdown("Font", {cfg.settings.fontName}, FONT_NAMES, false, function(v)
-    cfg.settings.fontName = v
-end)
+tab:Dropdown({
+    Title    = "Font",
+    Values   = FONT_NAMES,
+    Default  = cfg.settings.fontName,
+    Callback = function(v) cfg.settings.fontName = v end,
+})
 
-left:Divider("Labels")
+tab:Divider()
+tab:Section({ Title = "Labels" })
 
-left:Toggle("Criminal", cfg.criminal.enabled, function(v)
-    cfg.criminal.enabled = v
-end):AddColorpicker("Criminal Color", cfg.criminal.color, function(c)
-    cfg.criminal.color = c
-end)
+tab:Toggle({
+    Title    = "Criminal",
+    Value    = cfg.criminal.enabled,
+    Callback = function(v) cfg.criminal.enabled = v end,
+})
+tab:Colorpicker({
+    Title    = "Criminal Color",
+    Default  = cfg.criminal.color,
+    Callback = function(c) cfg.criminal.color = c end,
+})
 
-left:Toggle("Panic", cfg.panic.enabled, function(v)
-    cfg.panic.enabled = v
-end):AddColorpicker("Panic Color", cfg.panic.color, function(c)
-    cfg.panic.color = c
-end)
+tab:Toggle({
+    Title    = "Panic",
+    Value    = cfg.panic.enabled,
+    Callback = function(v) cfg.panic.enabled = v end,
+})
+tab:Colorpicker({
+    Title    = "Panic Color",
+    Default  = cfg.panic.color,
+    Callback = function(c) cfg.panic.color = c end,
+})
 
-left:Toggle("Deployables", cfg.deployable.enabled, function(v)
-    cfg.deployable.enabled = v
-end):AddColorpicker("Deployable Color", cfg.deployable.color, function(c)
-    cfg.deployable.color = c
-end)
+tab:Toggle({
+    Title    = "Deployables",
+    Value    = cfg.deployable.enabled,
+    Callback = function(v) cfg.deployable.enabled = v end,
+})
+tab:Colorpicker({
+    Title    = "Deployable Color",
+    Default  = cfg.deployable.color,
+    Callback = function(c) cfg.deployable.color = c end,
+})
 
--- Right column
-local right = tab:Section("Vehicles / Heli", "Right")
+tab:Divider()
+tab:Section({ Title = "Vehicles / Heli" })
 
-right:Toggle("Bounty Vehicles", cfg.bountyVehicle.enabled, function(v)
-    cfg.bountyVehicle.enabled = v
-end):AddColorpicker("Bounty Color", cfg.bountyVehicle.color, function(c)
-    cfg.bountyVehicle.color = c
-end)
+tab:Toggle({
+    Title    = "Bounty Vehicles",
+    Value    = cfg.bountyVehicle.enabled,
+    Callback = function(v) cfg.bountyVehicle.enabled = v end,
+})
+tab:Colorpicker({
+    Title    = "Bounty Color",
+    Default  = cfg.bountyVehicle.color,
+    Callback = function(c) cfg.bountyVehicle.color = c end,
+})
 
-right:Toggle("Stolen Vehicles", cfg.stolenVehicle.enabled, function(v)
-    cfg.stolenVehicle.enabled = v
-end):AddColorpicker("Stolen Color", cfg.stolenVehicle.color, function(c)
-    cfg.stolenVehicle.color = c
-end)
+tab:Toggle({
+    Title    = "Stolen Vehicles",
+    Value    = cfg.stolenVehicle.enabled,
+    Callback = function(v) cfg.stolenVehicle.enabled = v end,
+})
+tab:Colorpicker({
+    Title    = "Stolen Color",
+    Default  = cfg.stolenVehicle.color,
+    Callback = function(c) cfg.stolenVehicle.color = c end,
+})
 
-right:Toggle("Show Price", cfg.stolenVehicle.showPrice, function(v)
-    cfg.stolenVehicle.showPrice = v
-end):AddColorpicker("Price Color", cfg.stolenVehicle.priceColor, function(c)
-    cfg.stolenVehicle.priceColor = c
-end)
+tab:Toggle({
+    Title    = "Show Price",
+    Value    = cfg.stolenVehicle.showPrice,
+    Callback = function(v) cfg.stolenVehicle.showPrice = v end,
+})
+tab:Colorpicker({
+    Title    = "Price Color",
+    Default  = cfg.stolenVehicle.priceColor,
+    Callback = function(c) cfg.stolenVehicle.priceColor = c end,
+})
 
-right:Toggle("Personal Vehicle", cfg.personalVehicle.enabled, function(v)
-    cfg.personalVehicle.enabled = v
-end):AddColorpicker("Personal Color", cfg.personalVehicle.color, function(c)
-    cfg.personalVehicle.color = c
-end)
+tab:Toggle({
+    Title    = "Personal Vehicle",
+    Value    = cfg.personalVehicle.enabled,
+    Callback = function(v) cfg.personalVehicle.enabled = v end,
+})
+tab:Colorpicker({
+    Title    = "Personal Color",
+    Default  = cfg.personalVehicle.color,
+    Callback = function(c) cfg.personalVehicle.color = c end,
+})
 
-right:Toggle("Vehicle Health (on damage)", cfg.vehicleHealth.enabled, function(v)
-    cfg.vehicleHealth.enabled = v
-end)
+tab:Toggle({
+    Title    = "Vehicle Health (on damage)",
+    Value    = cfg.vehicleHealth.enabled,
+    Callback = function(v) cfg.vehicleHealth.enabled = v end,
+})
 
-right:Toggle("Helicopter", cfg.helicopter.enabled, function(v)
-    cfg.helicopter.enabled = v
-end):AddColorpicker("Heli Color", cfg.helicopter.color, function(c)
-    cfg.helicopter.color = c
-end)
+tab:Toggle({
+    Title    = "Helicopter",
+    Value    = cfg.helicopter.enabled,
+    Callback = function(v) cfg.helicopter.enabled = v end,
+})
+tab:Colorpicker({
+    Title    = "Heli Color",
+    Default  = cfg.helicopter.color,
+    Callback = function(c) cfg.helicopter.color = c end,
+})
 
-right:Toggle("Show Spotlighted", cfg.helicopter.showSpotlight, function(v)
-    cfg.helicopter.showSpotlight = v
-end):AddColorpicker("Spotlight Color", cfg.helicopter.spotlightColor, function(c)
-    cfg.helicopter.spotlightColor = c
-end)
+tab:Toggle({
+    Title    = "Show Spotlighted",
+    Value    = cfg.helicopter.showSpotlight,
+    Callback = function(v) cfg.helicopter.showSpotlight = v end,
+})
+tab:Colorpicker({
+    Title    = "Spotlight Color",
+    Default  = cfg.helicopter.spotlightColor,
+    Callback = function(c) cfg.helicopter.spotlightColor = c end,
+})
 
 -- ── Autofarms Tab ─────────────────────────────────
-local autoTab = win:Tab("Autofarms", "zap")
+local autoTab = win:Tab({ Title = "Autofarms", Icon = "zap" })
 
-local autoLeft = autoTab:Section("Minigame Autos", "Left")
-autoLeft:Info("Enable the ones you want. They run automatically when the corresponding minigame appears.")
+autoTab:Section({ Title = "Minigame Autos" })
+autoTab:Paragraph({
+    Title = "Info",
+    Desc  = "Enable the ones you want. They run automatically when the corresponding minigame appears.",
+})
 
-autoLeft:Toggle("Auto ATM (Grid)", cfg.atm.enabled, function(v)
-    cfg.atm.enabled = v
-    Lib:Notify("Autofarms", v and "ATM Hack: ON" or "ATM Hack: OFF", 2, v and "success" or "info")
-end)
+autoTab:Toggle({
+    Title    = "Auto ATM (Grid)",
+    Value    = cfg.atm.enabled,
+    Callback = function(v)
+        cfg.atm.enabled = v
+        notify("Autofarms", v and "ATM Hack: ON" or "ATM Hack: OFF", 2)
+    end,
+})
 
-autoLeft:Toggle("Auto Lockpick", cfg.lockpick.enabled, function(v)
-    cfg.lockpick.enabled = v
-    Lib:Notify("Autofarms", v and "Lockpick: ON" or "Lockpick: OFF", 2, v and "success" or "info")
-end)
+autoTab:Toggle({
+    Title    = "Auto Lockpick",
+    Value    = cfg.lockpick.enabled,
+    Callback = function(v)
+        cfg.lockpick.enabled = v
+        notify("Autofarms", v and "Lockpick: ON" or "Lockpick: OFF", 2)
+    end,
+})
 
-autoLeft:Toggle("Auto Glass Cutting", cfg.glasscut.enabled, function(v)
-    cfg.glasscut.enabled = v
-    Lib:Notify("Autofarms", v and "Glass Cutting: ON" or "Glass Cutting: OFF", 2, v and "success" or "info")
-end)
+autoTab:Toggle({
+    Title    = "Auto Glass Cutting",
+    Value    = cfg.glasscut.enabled,
+    Callback = function(v)
+        cfg.glasscut.enabled = v
+        notify("Autofarms", v and "Glass Cutting: ON" or "Glass Cutting: OFF", 2)
+    end,
+})
 
-autoLeft:Toggle("Auto Hotwire & Crowbar", cfg.hotwire.enabled, function(v)
-    cfg.hotwire.enabled = v
-    Lib:Notify("Autofarms", v and "Auto Hotwire Suite: ON" or "Auto Hotwire Suite: OFF", 2, v and "success" or "info")
-end)
+autoTab:Toggle({
+    Title    = "Auto Hotwire & Crowbar",
+    Value    = cfg.hotwire.enabled,
+    Callback = function(v)
+        cfg.hotwire.enabled = v
+        notify("Autofarms", v and "Auto Hotwire Suite: ON" or "Auto Hotwire Suite: OFF", 2)
+    end,
+})
 
-local autoRight = autoTab:Section("Actions", "Right")
-autoRight:Button("Reset Defaults", function()
-    cfg.masterEnabled            = true
-    cfg.criminal.enabled         = true
-    cfg.panic.enabled            = true
-    cfg.deployable.enabled       = true
-    cfg.bountyVehicle.enabled    = true
-    cfg.stolenVehicle.enabled    = true
-    cfg.stolenVehicle.showPrice  = true
-    cfg.personalVehicle.enabled  = true
-    cfg.vehicleHealth.enabled    = true
-    cfg.helicopter.enabled       = true
-    cfg.helicopter.showSpotlight = true
-    cfg.settings.maxDistance     = 5000
+autoTab:Divider()
+autoTab:Section({ Title = "Actions" })
+autoTab:Button({
+    Title    = "Reset Defaults",
+    Callback = function()
+        cfg.masterEnabled            = true
+        cfg.criminal.enabled         = true
+        cfg.panic.enabled            = true
+        cfg.deployable.enabled       = true
+        cfg.bountyVehicle.enabled    = true
+        cfg.stolenVehicle.enabled    = true
+        cfg.stolenVehicle.showPrice  = true
+        cfg.personalVehicle.enabled  = true
+        cfg.vehicleHealth.enabled    = true
+        cfg.helicopter.enabled       = true
+        cfg.helicopter.showSpotlight = true
+        cfg.settings.maxDistance     = 5000
 
-    cfg.atm.enabled      = false
-    cfg.lockpick.enabled = false
-    cfg.glasscut.enabled = false
-    cfg.hotwire.enabled  = false
+        cfg.atm.enabled      = false
+        cfg.lockpick.enabled = false
+        cfg.glasscut.enabled = false
+        cfg.hotwire.enabled  = false
 
-    Lib:Notify("ERLC ESP", "Defaults restored", 2, "success")
-end)
-
-win:AddSettingsTab("cog")
+        notify("ERLC ESP", "Defaults restored", 2)
+    end,
+})
 
 ----------------------------------------------------
 -- ESP LISTS & DRAWING ROUTINES
@@ -1809,7 +1883,7 @@ task.spawn(function()
             if altPressed and not lastAltState then
                 local newState = not cfg.masterEnabled
                 cfg.masterEnabled = newState
-                Lib:Notify("ERLC ESP", newState and "ESP: ON" or "ESP: OFF", 2, newState and "success" or "info")
+                notify("ERLC ESP", newState and "ESP: ON" or "ESP: OFF", 2)
             end
             lastAltState = altPressed
         end
@@ -1817,5 +1891,5 @@ task.spawn(function()
     end
 end)
 
-Lib:Notify("ERLC ESP", "Full ESP & Autos Ready\nUpdate #20 (INSUI)", 3, "success")
-print("ERLC Full ESP + Hotwire Suite loaded successfully (INSUI)!")
+notify("ERLC ESP", "Full ESP & Autos Ready — Update #21 (NonUI)", 3)
+print("ERLC Full ESP + Hotwire Suite loaded successfully (NonUI)!")
