@@ -1,6 +1,7 @@
--- ERLC Full ESP + NonUI + Modern Autofarms (Update #21)
+-- ERLC Full ESP + NonUI + Modern Autofarms (Update #21 - freeze fix)
 -- Fixed: Full Hotwire suite (Timing Bar, Wires, Numbers Hack), TangledWires hierarchy, ATM & Lockpick
 -- UI converted from INSUI → NonUI
+-- Freeze fix: re-execute cleanup, cached vehicle/spotlight scans, error logging, removed GetDescendants fallback
 
 local Players            = game:GetService("Players")
 local Workspace          = workspace or game:GetService("Workspace")
@@ -8,6 +9,41 @@ local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local RunService         = game:GetService("RunService")
 local LocalPlayer        = Players.LocalPlayer
 local cam                = Workspace and Workspace.CurrentCamera
+
+----------------------------------------------------
+-- RE-EXECUTE CLEANUP + SAFE RUNNER
+----------------------------------------------------
+if _G.__ERLC_ESP then pcall(_G.__ERLC_ESP.stop) end
+
+local ALIVE = true
+local allDrawings = {}
+local conns = {}
+
+_G.__ERLC_ESP = {
+    stop = function()
+        ALIVE = false
+        for _, c in ipairs(conns) do
+            pcall(function() c:Disconnect() end)
+        end
+        for d in pairs(allDrawings) do
+            pcall(function() d.Visible = false; d:Remove() end)
+        end
+        allDrawings = {}
+    end
+}
+
+local lastErr = {}
+local function safe(name, fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then
+        local msg = tostring(err)
+        if lastErr[name] ~= msg then
+            lastErr[name] = msg
+            local out = (type(warn) == "function") and warn or print
+            pcall(out, "[ERLC] " .. name .. ": " .. msg)
+        end
+    end
+end
 
 ----------------------------------------------------
 -- LOAD NonUI
@@ -543,6 +579,10 @@ local vehicleHealthState = {}
 local heliLabel          = nil
 local heliSpotlightLabel = nil
 
+-- Cached scans (refreshed by the 0.5s cache thread, read by the per-frame draw)
+local ownVehicles    = {}
+local spotlightNames = {}
+
 local OFFSET_STUD_SCALE = 0.1
 local DYNAMIC_REF_DIST  = 400
 
@@ -575,6 +615,7 @@ local function createTextEsp(size)
     label.ZIndex  = 120
     label.Visible = false
     applyTextStyle(label, size or 12)
+    allDrawings[label] = true
     return label
 end
 
@@ -586,14 +627,24 @@ local function createCircleEsp()
     circle.Transparency = 0
     circle.ZIndex       = 119
     circle.Visible      = false
+    allDrawings[circle] = true
     return circle
 end
 
 local function removeEsp(entry)
     if not entry then return end
-    if entry.Label then pcall(function() entry.Label:Remove() end) end
-    if entry.PriceLabel then pcall(function() entry.PriceLabel:Remove() end) end
-    if entry.Circle then pcall(function() entry.Circle:Remove() end) end
+    if entry.Label then
+        pcall(function() entry.Label:Remove() end)
+        allDrawings[entry.Label] = nil
+    end
+    if entry.PriceLabel then
+        pcall(function() entry.PriceLabel:Remove() end)
+        allDrawings[entry.PriceLabel] = nil
+    end
+    if entry.Circle then
+        pcall(function() entry.Circle:Remove() end)
+        allDrawings[entry.Circle] = nil
+    end
 end
 
 local function hideEntry(entry)
@@ -948,73 +999,85 @@ local function updatePersonalCache()
     end
 end
 
+-- Cached: list of the local player's vehicles (used by the health overlay)
+local function updateOwnVehicles()
+    local out = {}
+    local myName = LocalPlayer and LocalPlayer.Name
+    local vehicles = Workspace:FindFirstChild("Vehicles")
+    if myName and vehicles then
+        for _, m in ipairs(vehicles:GetChildren()) do
+            if (m:IsA("Model") or m:IsA("Folder")) and getOwnerString(m) == myName then
+                out[#out + 1] = m
+            end
+        end
+    end
+    ownVehicles = out
+end
+
+-- Cached: names of spotlighted players
+local function updateSpotlight()
+    local names = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            local l = p:FindFirstChild("LastLocation")
+            local s = l and l:FindFirstChild("Spotlighted")
+            if s and s.Value == true then names[#names + 1] = p.Name end
+        end
+    end
+    spotlightNames = names
+end
+
 local function updateVehicleHealthVisual(localPos, maxDist)
     if not cfg.masterEnabled or not cfg.vehicleHealth.enabled or not localPos then
         for _, st in pairs(vehicleHealthState) do if st.label then st.label.Visible = false end end
         return
     end
 
-    local myName = LocalPlayer and LocalPlayer.Name
-    if not myName then return end
-
     local now      = tick()
     local seen     = {}
     local nearDist = maxDist or cfg.settings.maxDistance or 5000
-    local vehicles = Workspace:FindFirstChild("Vehicles")
-    if not vehicles then return end
 
-    for _, model in ipairs(vehicles:GetChildren()) do
-        if model:IsA("Model") or model:IsA("Folder") then
-            local owner = getOwnerString(model)
-            if owner and owner == myName then
-                local key = getKey(model)
-                if key then
-                    local root = getRootPart(model)
-                    if root and root.Parent then
-                        local pos  = root.Position
-                        local dist = (pos - localPos).Magnitude
-                        if dist <= nearDist then
-                            seen[key] = true
-                            local health = getVehicleHealth(model)
-                            if typeof(health) == "number" then
-                                local st = vehicleHealthState[key]
-                                if not st then
-                                    local mh = getVehicleMaxHealth(model) or health
-                                    if mh < health then mh = health end
-                                    if mh <= 0 then mh = 100 end
-                                    st = {
-                                        lastHealth = health,
-                                        maxHealth  = mh,
-                                        showUntil  = 0,
-                                        label      = createTextEsp(cfg.vehicleHealth.fontSize),
-                                        model      = model,
-                                    }
-                                    vehicleHealthState[key] = st
-                                end
-                                st.model = model
+    for _, model in ipairs(ownVehicles) do
+        local key  = getKey(model)
+        local root = key and model.Parent and getRootPart(model)
+        local health = root and getVehicleHealth(model)
+        if root and typeof(health) == "number" then
+            local pos  = root.Position
+            local dist = (pos - localPos).Magnitude
+            if dist <= nearDist then
+                seen[key] = true
+                local st = vehicleHealthState[key]
+                if not st then
+                    local mh = math.max(getVehicleMaxHealth(model) or health, health, 1)
+                    st = {
+                        lastHealth = health,
+                        maxHealth  = mh,
+                        showUntil  = 0,
+                        label      = createTextEsp(cfg.vehicleHealth.fontSize),
+                        model      = model,
+                    }
+                    vehicleHealthState[key] = st
+                end
+                st.model = model
 
-                                local realMax = getVehicleMaxHealth(model)
-                                if realMax and realMax > 0 then
-                                    st.maxHealth = realMax
-                                elseif health > (st.maxHealth or 0) then
-                                    st.maxHealth = health
-                                end
+                local realMax = getVehicleMaxHealth(model)
+                if realMax and realMax > 0 then
+                    st.maxHealth = realMax
+                elseif health > (st.maxHealth or 0) then
+                    st.maxHealth = health
+                end
 
-                                if health < st.lastHealth then
-                                    st.showUntil = now + (cfg.vehicleHealth.showSeconds or 5)
-                                end
-                                st.lastHealth = health
+                if health < st.lastHealth then
+                    st.showUntil = now + (cfg.vehicleHealth.showSeconds or 5)
+                end
+                st.lastHealth = health
 
-                                if now < st.showUntil then
-                                    local text = "HP: " .. tostring(math.floor(health + 0.5))
-                                    local col  = healthToColor(health, st.maxHealth)
-                                    drawText(st.label, pos, text, col, cfg.vehicleHealth.yOffset, cfg.vehicleHealth.fontSize, dist)
-                                else
-                                    st.label.Visible = false
-                                end
-                            end
-                        end
-                    end
+                if now < st.showUntil then
+                    local text = "HP: " .. tostring(math.floor(health + 0.5))
+                    local col  = healthToColor(health, st.maxHealth)
+                    drawText(st.label, pos, text, col, cfg.vehicleHealth.yOffset, cfg.vehicleHealth.fontSize, dist)
+                else
+                    st.label.Visible = false
                 end
             end
         end
@@ -1024,7 +1087,10 @@ local function updateVehicleHealthVisual(localPos, maxDist)
         if not seen[key] then
             if st.label then st.label.Visible = false end
             if not st.model or not st.model.Parent then
-                if st.label then pcall(function() st.label:Remove() end) end
+                if st.label then
+                    pcall(function() st.label:Remove() end)
+                    allDrawings[st.label] = nil
+                end
                 vehicleHealthState[key] = nil
             end
         end
@@ -1160,7 +1226,7 @@ local function updateVisuals()
         end)
     end
 
-    pcall(function() updateVehicleHealthVisual(localPos, maxDist) end)
+    safe("vehicleHealth", updateVehicleHealthVisual, localPos, maxDist)
 
     -- Helicopter
     if cfg.helicopter.enabled then
@@ -1185,26 +1251,14 @@ local function updateVisuals()
                 heliLabel.Position = screenPos
                 heliLabel.Visible  = true
 
-                if cfg.helicopter.showSpotlight then
-                    local spotlightNames = {}
-                    for _, player in ipairs(Players:GetPlayers()) do
-                        if player ~= LocalPlayer then
-                            local lastLoc = player:FindFirstChild("LastLocation")
-                            local spotlighted = lastLoc and lastLoc:FindFirstChild("Spotlighted")
-                            if spotlighted and spotlighted.Value == true then table.insert(spotlightNames, player.Name) end
-                        end
-                    end
-                    if #spotlightNames > 0 then
-                        local text = "Spotlighted: " .. table.concat(spotlightNames, ", ")
-                        local sfs = calcFontSize(cfg.helicopter.spotlightFontSize, dist)
-                        applyTextStyle(heliSpotlightLabel, sfs)
-                        heliSpotlightLabel.Text     = text
-                        heliSpotlightLabel.Color    = cfg.helicopter.spotlightColor
-                        heliSpotlightLabel.Position = Vector2.new(screenPos.X, screenPos.Y + 16)
-                        heliSpotlightLabel.Visible  = true
-                    else
-                        heliSpotlightLabel.Visible = false
-                    end
+                if cfg.helicopter.showSpotlight and #spotlightNames > 0 then
+                    local text = "Spotlighted: " .. table.concat(spotlightNames, ", ")
+                    local sfs = calcFontSize(cfg.helicopter.spotlightFontSize, dist)
+                    applyTextStyle(heliSpotlightLabel, sfs)
+                    heliSpotlightLabel.Text     = text
+                    heliSpotlightLabel.Color    = cfg.helicopter.spotlightColor
+                    heliSpotlightLabel.Position = Vector2.new(screenPos.X, screenPos.Y + 16)
+                    heliSpotlightLabel.Visible  = true
                 else
                     heliSpotlightLabel.Visible = false
                 end
@@ -1706,17 +1760,7 @@ local function findWireDropTarget(ui, pair)
         if contact and guiRect(contact) then return contact end
     end
 
-    pcall(function()
-        for _, child in ipairs(tangle:GetDescendants()) do
-            if wireName and child.Name == wireName then
-                local contact = findChild(child, "Contact") or child
-                if contact and guiRect(contact) then
-                    return contact
-                end
-            end
-        end
-    end)
-
+    -- (removed: GetDescendants fallback — it ran every tick and could never return a value)
     return nil
 end
 
@@ -1819,21 +1863,23 @@ end
 -- AUTOFARM RUNNER THREADS
 ----------------------------------------------------
 task.spawn(function()
-    while true do
-        pcall(stepAtm)
-        pcall(stepLockpick)
+    while ALIVE do
+        safe("atm", stepAtm)
+        safe("lockpick", stepLockpick)
         task.wait(0.01)
     end
 end)
 
 if RunService then
-    RunService.RenderStepped:Connect(function()
-        pcall(stepGlassCut)
+    local c = RunService.RenderStepped:Connect(function()
+        if not ALIVE then return end
+        safe("glasscut", stepGlassCut)
     end)
+    conns[#conns + 1] = c
 end
 
 task.spawn(function()
-    while true do
+    while ALIVE do
         local ok, menus = pcall(function()
             local pg = getPlayerGui()
             return pg and findChild(pg, "GameMenus")
@@ -1841,11 +1887,11 @@ task.spawn(function()
         if ok and menus and cfg.hotwire.enabled then
             local now = os.clock()
             if memVisible(findChild(menus, "NumbersHack")) == true then
-                pcall(stepNumbersHack, menus, now)
+                safe("numbers", stepNumbersHack, menus, now)
             elseif memVisible(findChild(menus, "ConnectWires")) == true then
-                pcall(stepConnectWires, menus, now)
+                safe("wires", stepConnectWires, menus, now)
             else
-                pcall(stepCrowbarBar, menus, now)
+                safe("crowbar", stepCrowbarBar, menus, now)
             end
         end
         task.wait(0.01)
@@ -1856,20 +1902,22 @@ end)
 -- ESP BACKGROUND THREADS
 ----------------------------------------------------
 task.spawn(function()
-    while true do
-        pcall(updateCriminalCache)
-        pcall(updatePanicCache)
-        pcall(updateDeployableCache)
-        pcall(updateBountyCache)
-        pcall(updateStolenCache)
-        pcall(updatePersonalCache)
+    while ALIVE do
+        safe("criminal", updateCriminalCache)
+        safe("panic", updatePanicCache)
+        safe("deployable", updateDeployableCache)
+        safe("bounty", updateBountyCache)
+        safe("stolen", updateStolenCache)
+        safe("personal", updatePersonalCache)
+        safe("ownVehicles", updateOwnVehicles)
+        safe("spotlight", updateSpotlight)
         task.wait(0.5)
     end
 end)
 
 task.spawn(function()
-    while true do
-        pcall(updateVisuals)
+    while ALIVE do
+        safe("visuals", updateVisuals)
         task.wait()
     end
 end)
@@ -1877,7 +1925,7 @@ end)
 -- Alt key toggle for Master ESP
 local lastAltState = false
 task.spawn(function()
-    while true do
+    while ALIVE do
         if iskeypressed then
             local altPressed = iskeypressed(0x12)
             if altPressed and not lastAltState then
