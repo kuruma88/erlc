@@ -1,7 +1,10 @@
--- ERLC Full ESP + NonUI + Modern Autofarms (Update #21 - freeze fix)
--- Fixed: Full Hotwire suite (Timing Bar, Wires, Numbers Hack), TangledWires hierarchy, ATM & Lockpick
--- UI converted from INSUI → NonUI
--- Freeze fix: re-execute cleanup, cached vehicle/spotlight scans, error logging, removed GetDescendants fallback
+-- ERLC Full ESP + NonUI + Autofarms (Update #22 - performance build)
+-- * Collector/renderer split: all instance lookups run at 2-7 Hz, the per-frame renderer only reads cached parts
+-- * Drawing pool + change-only property writes (no per-frame Font/Size/Color/Text spam)
+-- * Single RenderStepped connection, idle autofarm loop sleeps when nothing is enabled
+-- * Roblox update fix: GUI memory offsets shifted by -16 (Visible/AbsolutePosition/AbsoluteSize/BackgroundColor3),
+--   AbsoluteSize property now reads 0 so memory is read first, offsets auto-calibrate on load
+-- * ConnectWires: wire buttons now live under "ConnectWires LS.Wires" (handled)
 
 local Players            = game:GetService("Players")
 local Workspace          = workspace or game:GetService("Workspace")
@@ -9,6 +12,8 @@ local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local RunService         = game:GetService("RunService")
 local LocalPlayer        = Players.LocalPlayer
 local cam                = Workspace and Workspace.CurrentCamera
+
+local floor, sqrt, abs, max, min = math.floor, math.sqrt, math.abs, math.max, math.min
 
 ----------------------------------------------------
 -- RE-EXECUTE CLEANUP + SAFE RUNNER
@@ -110,7 +115,6 @@ local cfg = {
         spotlightFontSize = 11,
         spotlightColor    = Color3.fromRGB(255, 180, 40),
         showSpotlight     = true,
-        edgeMargin        = 50,
     },
 
     -- Autofarms
@@ -123,6 +127,7 @@ local cfg = {
         fontName    = "SystemBold",
         dynamicSize = 0,
         maxDistance = 5000,
+        espRate     = 0, -- 0 = every frame, otherwise max ESP redraws per second
     }
 }
 
@@ -137,6 +142,7 @@ local FONT_MAP = {
     Fortnite   = Drawing.Fonts.Fortnite,
 }
 
+local fontVer = 0
 local function getEspFont()
     return FONT_MAP[cfg.settings.fontName] or Drawing.Fonts.SystemBold
 end
@@ -144,12 +150,13 @@ end
 ----------------------------------------------------
 -- MEMORY OFFSETS & UNCACHED READING
 ----------------------------------------------------
+-- Defaults for Roblox version-02c37bc51a384b8f (verified live). calibrate() re-derives them after future updates.
 local GUI_OFF = {
-    Visible          = 1453, -- 0x5AD
-    Text             = 3576, -- 0xDF8
-    BackgroundColor3 = 1344, -- 0x540
-    AbsolutePosition = 268,  -- 0x10C
-    AbsoluteSize     = 276,  -- 0x114
+    Visible          = 1437,
+    Text             = 3568, -- short strings only (property read is used first)
+    BackgroundColor3 = 1328,
+    AbsolutePosition = 252,
+    AbsoluteSize     = 260,
 }
 
 local function rawAddr(inst)
@@ -191,15 +198,21 @@ local function memAbsPos(inst)
     return nil, nil
 end
 
+-- NOTE: the AbsoluteSize property currently returns 0x0 for every GuiObject, so memory is read first.
 local function memAbsSize(inst)
-    local size = nil
-    pcall(function() size = inst.AbsoluteSize end)
-    if size and size.X and size.Y then return size.X, size.Y end
     local addr = rawAddr(inst)
     if addr then
         local base = addr + GUI_OFF.AbsoluteSize
         local x = memRead("float", base)
         local y = memRead("float", base + 4)
+        if x and y and (x > 0 or y > 0) then return x, y end
+    end
+    local size = nil
+    pcall(function() size = inst.AbsoluteSize end)
+    if size and size.X and size.Y and (size.X > 0 or size.Y > 0) then return size.X, size.Y end
+    if addr then
+        local x = memRead("float", addr + GUI_OFF.AbsoluteSize)
+        local y = memRead("float", addr + GUI_OFF.AbsoluteSize + 4)
         if x and y then return x, y end
     end
     return nil, nil
@@ -286,6 +299,62 @@ local function getPlayerGui()
     return pg or findChild(LocalPlayer, "PlayerGui")
 end
 
+-- Cached GameMenus lookup (was re-resolved every 10 ms before)
+local menusRef, menusAt = nil, -10
+local function getMenus()
+    local now = os.clock()
+    if menusRef and now - menusAt < 3 then return menusRef end
+    local pg = getPlayerGui()
+    menusRef = pg and findChild(pg, "GameMenus") or nil
+    menusAt = now
+    return menusRef
+end
+
+-- Re-derives the GUI offsets from a visible element whose AbsolutePosition the API can still read.
+-- Visible = pos + 1185, BackgroundColor3 = pos + 1076, AbsoluteSize = pos + 8 (relations held across the last update).
+local function calibrate()
+    local pg = getPlayerGui()
+    local gg = pg and findChild(pg, "GameGui")
+    if not gg then return false, "GameGui not found" end
+    local sample = nil
+    local px, py = nil, nil
+    local function consider(inst)
+        if sample then return end
+        local p = nil
+        pcall(function() p = inst.AbsolutePosition end)
+        if p and p.X and p.Y and p.X > 1 and p.Y > 1 and abs(p.X - p.Y) > 2 then
+            sample, px, py = inst, p.X, p.Y
+        end
+    end
+    pcall(function()
+        for _, c in ipairs(gg:GetChildren()) do
+            consider(c)
+            if sample then break end
+            for _, c2 in ipairs(c:GetChildren()) do
+                consider(c2)
+                if sample then break end
+            end
+            if sample then break end
+        end
+    end)
+    if not sample then return false, "no positioned GUI element found" end
+    local base = rawAddr(sample)
+    if not base then return false, "no address" end
+    for off = 128, 512, 4 do
+        local x = memRead("float", base + off)
+        local y = memRead("float", base + off + 4)
+        if x and y and abs(x - px) < 0.6 and abs(y - py) < 0.6 then
+            GUI_OFF.AbsolutePosition = off
+            GUI_OFF.AbsoluteSize     = off + 8
+            GUI_OFF.Visible          = off + 1185
+            GUI_OFF.BackgroundColor3 = off + 1076
+            return true, off
+        end
+    end
+    return false, "position pair not found in memory"
+end
+pcall(calibrate)
+
 local function guiRect(inst)
     local x, y = memAbsPos(inst)
     local w, h = memAbsSize(inst)
@@ -315,7 +384,7 @@ local function moveMouseToward(tx, ty)
         dx = clamp(mx + dx, 8, vw - 8) - mx
         dy = clamp(my + dy, 8, vh - 8) - my
     end
-    local dist = math.sqrt(dx * dx + dy * dy)
+    local dist = sqrt(dx * dx + dy * dy)
     local maxStep = 90
     if dist > maxStep then
         dx = dx / dist * maxStep
@@ -349,7 +418,7 @@ end
 
 local win = Lib:CreateWindow({
     Title     = "ERLC ESP",
-    Author    = "Update #21",
+    Author    = "Update #22",
     Size      = { 640, 540 },
     ToggleKey = "k",
     Theme     = "Indigo",
@@ -376,11 +445,21 @@ tab:Slider({
     Callback = function(v) cfg.settings.maxDistance = v end,
 })
 
+tab:Slider({
+    Title    = "ESP Update Rate (0 = every frame)",
+    Default  = cfg.settings.espRate,
+    Min      = 0,
+    Max      = 240,
+    Step     = 5,
+    Suffix   = " fps",
+    Callback = function(v) cfg.settings.espRate = v end,
+})
+
 tab:Dropdown({
     Title    = "Font",
     Values   = FONT_NAMES,
     Default  = cfg.settings.fontName,
-    Callback = function(v) cfg.settings.fontName = v end,
+    Callback = function(v) cfg.settings.fontName = v; fontVer = fontVer + 1 end,
 })
 
 tab:Divider()
@@ -542,6 +621,13 @@ autoTab:Toggle({
 autoTab:Divider()
 autoTab:Section({ Title = "Actions" })
 autoTab:Button({
+    Title    = "Recalibrate GUI Offsets",
+    Callback = function()
+        local ok, info = calibrate()
+        notify("ERLC ESP", ok and ("Offsets calibrated (pos @" .. tostring(info) .. ")") or ("Calibration failed: " .. tostring(info)), 3)
+    end,
+})
+autoTab:Button({
     Title    = "Reset Defaults",
     Callback = function()
         cfg.masterEnabled            = true
@@ -556,6 +642,7 @@ autoTab:Button({
         cfg.helicopter.enabled       = true
         cfg.helicopter.showSpotlight = true
         cfg.settings.maxDistance     = 5000
+        cfg.settings.espRate         = 0
 
         cfg.atm.enabled      = false
         cfg.lockpick.enabled = false
@@ -567,111 +654,197 @@ autoTab:Button({
 })
 
 ----------------------------------------------------
--- ESP LISTS & DRAWING ROUTINES
+-- DRAWING POOL + CHANGE-ONLY LABELS
 ----------------------------------------------------
-local criminalList       = {}
-local panicList          = {}
-local deployableList     = {}
-local bountyList         = {}
-local stolenList         = {}
-local personalList       = {}
-local vehicleHealthState = {}
-local heliLabel          = nil
-local heliSpotlightLabel = nil
-
--- Cached scans (refreshed by the 0.5s cache thread, read by the per-frame draw)
-local ownVehicles    = {}
-local spotlightNames = {}
-
 local OFFSET_STUD_SCALE = 0.1
-local DYNAMIC_REF_DIST  = 400
 
-local function calcFontSize(baseSize, dist)
-    baseSize = tonumber(baseSize) or 10
-    local dynamic = tonumber(cfg.settings.dynamicSize) or 0
-    if dynamic <= 0 then return baseSize end
-    local distNorm = math.min((tonumber(dist) or 0) / DYNAMIC_REF_DIST, 1)
-    local intensity = dynamic / 10
-    local minScale = 1 - intensity * 0.5
-    local maxScale = 1 + intensity * 0.5
-    local scale = minScale + distNorm * (maxScale - minScale)
-    return math.max(8, math.floor(baseSize * scale + 0.5))
+local textFree, circleFree = {}, {}
+
+local function acquireText()
+    local d = table.remove(textFree)
+    if d then return d end
+    d = Drawing.new("Text")
+    d.Center  = true
+    d.Outline = true
+    d.ZIndex  = 120
+    d.Visible = false
+    allDrawings[d] = true
+    return d
 end
 
-local function applyTextStyle(label, fs)
-    if not label then return end
-    fs = math.max(8, math.floor(tonumber(fs) or 10))
-    pcall(function()
-        label.Font     = getEspFont()
-        label.FontSize = fs
-        label.Size     = fs
-    end)
+local function acquireCircle()
+    local d = table.remove(circleFree)
+    if d then return d end
+    d = Drawing.new("Circle")
+    d.Filled       = true
+    d.NumSides     = 10
+    d.Thickness    = 1
+    d.Transparency = 0
+    d.ZIndex       = 119
+    d.Visible      = false
+    allDrawings[d] = true
+    return d
 end
 
-local function createTextEsp(size)
-    local label = Drawing.new("Text")
-    label.Center  = true
-    label.Outline = true
-    label.ZIndex  = 120
-    label.Visible = false
-    applyTextStyle(label, size or 12)
-    allDrawings[label] = true
-    return label
+local function newLabel()
+    return { d = acquireText(), vis = false, text = nil, fs = -1, fv = -1, r = -1, g = -1, b = -1, x = -1, y = -1 }
 end
 
-local function createCircleEsp()
-    local circle = Drawing.new("Circle")
-    circle.Filled       = true
-    circle.NumSides     = 10
-    circle.Thickness    = 1
-    circle.Transparency = 0
-    circle.ZIndex       = 119
-    circle.Visible      = false
-    allDrawings[circle] = true
-    return circle
-end
-
-local function removeEsp(entry)
-    if not entry then return end
-    if entry.Label then
-        pcall(function() entry.Label:Remove() end)
-        allDrawings[entry.Label] = nil
-    end
-    if entry.PriceLabel then
-        pcall(function() entry.PriceLabel:Remove() end)
-        allDrawings[entry.PriceLabel] = nil
-    end
-    if entry.Circle then
-        pcall(function() entry.Circle:Remove() end)
-        allDrawings[entry.Circle] = nil
+local function freeLabel(l)
+    if l and l.d then
+        l.d.Visible = false
+        textFree[#textFree + 1] = l.d
+        l.d = nil
+        l.vis = false
     end
 end
 
-local function hideEntry(entry)
-    if not entry then return end
-    if entry.Label then entry.Label.Visible = false end
-    if entry.PriceLabel then entry.PriceLabel.Visible = false end
-    if entry.Circle then entry.Circle.Visible = false end
+local function showLabel(l, text, color, fs, x, y)
+    local d = l.d
+    if not d then return end
+    fs = max(8, floor(tonumber(fs) or 10))
+    if l.fs ~= fs or l.fv ~= fontVer then
+        pcall(function() d.Size = fs end)
+        pcall(function() d.Font = getEspFont() end)
+        pcall(function() d.FontSize = fs end)
+        l.fs, l.fv = fs, fontVer
+    end
+    if l.text ~= text then d.Text = text; l.text = text end
+    local r, g, b = color.R, color.G, color.B
+    if l.r ~= r or l.g ~= g or l.b ~= b then
+        d.Color = color
+        l.r, l.g, l.b = r, g, b
+    end
+    if l.x ~= x or l.y ~= y then
+        d.Position = Vector2.new(x, y)
+        l.x, l.y = x, y
+    end
+    if not l.vis then d.Visible = true; l.vis = true end
 end
 
-local function getLocalPos()
-    local char = LocalPlayer and LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp and hrp.Position then return hrp.Position end
-    if cam and cam.Position then return cam.Position end
-    return nil
+local function hideLabel(l)
+    if l and l.vis and l.d then
+        l.d.Visible = false
+        l.vis = false
+    end
 end
 
+local function newCircle()
+    return { d = acquireCircle(), vis = false, rad = -1, r = -1, g = -1, b = -1, x = -1, y = -1 }
+end
+
+local function freeCircle(c)
+    if c and c.d then
+        c.d.Visible = false
+        circleFree[#circleFree + 1] = c.d
+        c.d = nil
+        c.vis = false
+    end
+end
+
+local function showCircle(c, x, y, radius, color)
+    local d = c.d
+    if not d then return end
+    if c.rad ~= radius then d.Radius = radius; c.rad = radius end
+    local r, g, b = color.R, color.G, color.B
+    if c.r ~= r or c.g ~= g or c.b ~= b then
+        d.Color = color
+        c.r, c.g, c.b = r, g, b
+    end
+    if c.x ~= x or c.y ~= y then
+        d.Position = Vector2.new(x, y)
+        c.x, c.y = x, y
+    end
+    if not c.vis then d.Visible = true; c.vis = true end
+end
+
+local function hideCircle(c)
+    if c and c.vis and c.d then
+        c.d.Visible = false
+        c.vis = false
+    end
+end
+
+local function getLbl(e, field)
+    local l = e[field]
+    if not l then
+        l = newLabel()
+        e[field] = l
+    end
+    return l
+end
+
+local function getCirc(e)
+    local c = e.circle
+    if not c then
+        c = newCircle()
+        e.circle = c
+    end
+    return c
+end
+
+local function freeEntry(e)
+    if e.label then freeLabel(e.label); e.label = nil end
+    if e.price then freeLabel(e.price); e.price = nil end
+    if e.hpLabel then freeLabel(e.hpLabel); e.hpLabel = nil end
+    if e.circle then freeCircle(e.circle); e.circle = nil end
+end
+
+local function hideField(e, field)
+    local l = e[field]
+    if l then hideLabel(l) end
+end
+
+local function hideAll(arr, field)
+    for i = 1, #arr do hideField(arr[i], field) end
+end
+
+-- Category = persistent entry map + flat array rebuilt by the collector
+local function newCat() return { map = {}, arr = {}, mark = 0 } end
+
+local crimCat, panicCat, deployCat, bountyCat, stolenCat, ownCat =
+    newCat(), newCat(), newCat(), newCat(), newCat(), newCat()
+
+local function beginCat(cat) cat.mark = cat.mark + 1 end
+
+local function touch(cat, key)
+    local e = cat.map[key]
+    if not e then
+        e = {}
+        cat.map[key] = e
+    end
+    e.mark = cat.mark
+    return e
+end
+
+local function endCat(cat)
+    local arr = {}
+    for k, e in pairs(cat.map) do
+        if e.mark ~= cat.mark then
+            freeEntry(e)
+            cat.map[k] = nil
+        else
+            arr[#arr + 1] = e
+        end
+    end
+    cat.arr = arr
+end
+
+local function clearCat(cat)
+    if next(cat.map) == nil then return end
+    for _, e in pairs(cat.map) do freeEntry(e) end
+    cat.map = {}
+    cat.arr = {}
+end
+
+----------------------------------------------------
+-- SMALL GAME HELPERS
+----------------------------------------------------
 local function getRootPart(model)
     if not model then return nil end
     return model:FindFirstChild("HumanoidRootPart")
         or model.PrimaryPart
         or model:FindFirstChildWhichIsA("BasePart")
-end
-
-local function getKey(obj)
-    if not obj then return nil end
-    return obj.Address or tostring(obj)
 end
 
 local function getStringField(model, name)
@@ -680,23 +853,10 @@ local function getStringField(model, name)
     if type(attr) == "string" and attr ~= "" then return attr end
     local child = model:FindFirstChild(name)
     if child then
-        if child:IsA("StringValue") then return child.Value end
-        if typeof(child.Value) == "string" then return child.Value end
-        if typeof(child.Value) == "Instance" and child.Value:IsA("Player") then
-            return child.Value.Name
-        end
+        local v = child.Value
+        if type(v) == "string" then return v end
+        if typeof(v) == "Instance" and v.ClassName == "Player" then return v.Name end
     end
-    return nil
-end
-
-local function getOwnerString(model) return getStringField(model, "Owner") end
-local function getDriverName(model)  return getStringField(model, "DriverName") end
-
-local function getVehicleHealth(model)
-    if not model then return nil end
-    local cv = model:FindFirstChild("Control_Values")
-    local healthObj = cv and cv:FindFirstChild("Health")
-    if healthObj and typeof(healthObj.Value) == "number" then return healthObj.Value end
     return nil
 end
 
@@ -706,7 +866,7 @@ local function getVehicleMaxHealth(model)
     if not cv then return nil end
     for _, name in ipairs({ "MaxHealth", "Max_Health", "maxHealth", "HealthMax", "MaxHP" }) do
         local obj = cv:FindFirstChild(name)
-        if obj and typeof(obj.Value) == "number" and obj.Value > 0 then return obj.Value end
+        if obj and type(obj.Value) == "number" and obj.Value > 0 then return obj.Value end
     end
     return nil
 end
@@ -714,570 +874,432 @@ end
 local function healthToColor(health, maxHealth)
     local maxH = tonumber(maxHealth) or 0
     if maxH <= 0 then maxH = 100 end
-    local t = math.clamp((tonumber(health) or 0) / maxH, 0, 1)
+    local t = clamp((tonumber(health) or 0) / maxH, 0, 1)
     return Color3.new(1 - t, t, 0.12)
 end
 
-local function drawText(label, pos, text, color, yOffset, baseFontSize, dist)
-    local anchorPos = Vector3.new(pos.X, pos.Y + (yOffset * OFFSET_STUD_SCALE), pos.Z)
-    local sPos, onScreen = WorldToScreen(anchorPos)
-    if not onScreen or not sPos then
-        label.Visible = false
-        return nil
-    end
-    local fs = calcFontSize(baseFontSize, dist)
-    applyTextStyle(label, fs)
-    label.Center   = true
-    label.Text     = text
-    label.Position = Vector2.new(sPos.X, sPos.Y)
-    label.Color    = color
-    label.Visible  = true
-    return sPos
+local function calcFontSize(baseSize, dist)
+    baseSize = tonumber(baseSize) or 10
+    local dynamic = tonumber(cfg.settings.dynamicSize) or 0
+    if dynamic <= 0 then return baseSize end
+    local distNorm = min((tonumber(dist) or 0) / 400, 1)
+    local intensity = dynamic / 10
+    local minScale = 1 - intensity * 0.5
+    local maxScale = 1 + intensity * 0.5
+    local scale = minScale + distNorm * (maxScale - minScale)
+    return max(8, floor(baseSize * scale + 0.5))
 end
 
-local function getHelicopterPosition()
+----------------------------------------------------
+-- COLLECTORS (slow, do all instance lookups)
+----------------------------------------------------
+local myName, myId = LocalPlayer and LocalPlayer.Name, LocalPlayer and LocalPlayer.UserId
+local localRoot = nil
+local spotText = nil
+local heliPart, heliOutObj, heliPosObj = nil, nil, nil
+
+local function collectPlayers(master)
+    local critOn  = master and cfg.criminal.enabled
+    local panicOn = master and cfg.panic.enabled
+    local spotOn  = master and cfg.helicopter.enabled and cfg.helicopter.showSpotlight
+
+    if critOn then beginCat(crimCat) else clearCat(crimCat) end
+    if panicOn then beginCat(panicCat) else clearCat(panicCat) end
+    if not (critOn or panicOn or spotOn) then spotText = nil return end
+
+    local names = nil
+    for _, p in ipairs(Players:GetPlayers()) do
+        local uid = p.UserId
+        if uid ~= myId then
+            local char = p.Character
+            local head = nil
+
+            if critOn then
+                local iw = p:FindFirstChild("Is_Wanted")
+                local val = iw and iw.Value
+                if val and (type(val) ~= "number" or val > 0) then
+                    head = char and char:FindFirstChild("Head")
+                    local e = touch(crimCat, uid)
+                    e.part = head
+                    e.text = tostring(val)
+                end
+            end
+
+            if panicOn then
+                local ap = p:FindFirstChild("ActivePanic") or (char and char:FindFirstChild("ActivePanic"))
+                if ap then
+                    local active = true
+                    if ap.ClassName == "BoolValue" then active = ap.Value == true end
+                    if active then
+                        head = head or (char and char:FindFirstChild("Head"))
+                        local e = touch(panicCat, uid)
+                        e.part = head
+                        e.text = "*PANIC*"
+                    end
+                end
+            end
+
+            if spotOn then
+                local ll = p:FindFirstChild("LastLocation")
+                local s = ll and ll:FindFirstChild("Spotlighted")
+                if s and s.Value == true then
+                    names = names or {}
+                    names[#names + 1] = p.Name
+                end
+            end
+        end
+    end
+
+    if critOn then endCat(crimCat) end
+    if panicOn then endCat(panicCat) end
+    spotText = names and ("Spotlighted: " .. table.concat(names, ", ")) or nil
+end
+
+local function collectModels(cat, on, parent, textOverride)
+    if not on then clearCat(cat) return end
+    beginCat(cat)
+    if parent then
+        for _, m in ipairs(parent:GetChildren()) do
+            local cn = m.ClassName
+            if cn == "Model" or cn == "Folder" then
+                local e = touch(cat, m.Address or tostring(m))
+                e.part = getRootPart(m)
+                e.text = textOverride or m.Name
+            end
+        end
+    end
+    endCat(cat)
+end
+
+local function collectVehicles(master)
+    local stolenOn = master and cfg.stolenVehicle.enabled
+    local ownOn    = master and (cfg.personalVehicle.enabled or cfg.vehicleHealth.enabled)
+
+    if stolenOn then beginCat(stolenCat) else clearCat(stolenCat) end
+    if ownOn then beginCat(ownCat) else clearCat(ownCat) end
+    if not (stolenOn or ownOn) then return end
+
+    local vehicles = Workspace:FindFirstChild("Vehicles")
+    if vehicles then
+        for _, m in ipairs(vehicles:GetChildren()) do
+            local cn = m.ClassName
+            if cn == "Model" or cn == "Folder" then
+                if stolenOn then
+                    local price = m:GetAttribute("ChopShopPrice")
+                    if type(price) == "number" then
+                        local e = touch(stolenCat, m.Address or tostring(m))
+                        e.part = getRootPart(m)
+                        e.text = "*Stolen Vehicle*"
+                        e.priceText = "$" .. tostring(price)
+                    end
+                end
+                if ownOn and myName and getStringField(m, "Owner") == myName then
+                    local e = touch(ownCat, m.Address or tostring(m))
+                    e.part = getRootPart(m)
+                    e.text = cfg.personalVehicle.text
+                    local driver = getStringField(m, "DriverName")
+                    e.hidden = (driver ~= nil and driver == myName)
+                    local cv = m:FindFirstChild("Control_Values")
+                    e.healthObj = cv and cv:FindFirstChild("Health") or nil
+                    e.realMax = getVehicleMaxHealth(m)
+                end
+            end
+        end
+    end
+
+    if stolenOn then endCat(stolenCat) end
+    if ownOn then endCat(ownCat) end
+end
+
+local function collectHeli(master)
+    if not (master and cfg.helicopter.enabled) then
+        heliPart, heliOutObj, heliPosObj = nil, nil, nil
+        return
+    end
     local folder = Workspace:FindFirstChild("Helicopter")
     local model  = folder and folder:FindFirstChild("Helicopter")
-    local root   = getRootPart(model)
-    if root and root.Parent then return root.Position end
-
-    local ok, pos = pcall(function()
+    heliPart = model and getRootPart(model) or nil
+    if heliPart then
+        heliOutObj, heliPosObj = nil, nil
+    else
         local rs   = ReplicatedStorage:FindFirstChild("ReplicatedState")
         local misc = rs and rs:FindFirstChild("MiscValues")
-        if not misc then return nil end
-        local heliOut = misc:FindFirstChild("HeliOut")
-        local heliPos = misc:FindFirstChild("HeliPosition")
-        if heliOut and heliOut.Value == true and heliPos then return heliPos.Value end
-        return nil
-    end)
-    if ok and pos then return pos end
-    return nil
+        heliOutObj = misc and misc:FindFirstChild("HeliOut") or nil
+        heliPosObj = misc and misc:FindFirstChild("HeliPosition") or nil
+    end
 end
 
-local function getHeliScreenPos(worldPos)
-    local margin = cfg.helicopter.edgeMargin or 50
-    local sPos, onScreen = WorldToScreen(worldPos)
-    if onScreen and sPos then return Vector2.new(sPos.X, sPos.Y), true end
+local function collectSlow()
+    local master = cfg.masterEnabled
+    cam = Workspace.CurrentCamera or cam
+    local char = LocalPlayer and LocalPlayer.Character
+    localRoot = char and char:FindFirstChild("HumanoidRootPart") or nil
+    myName = LocalPlayer and LocalPlayer.Name
+    myId = LocalPlayer and LocalPlayer.UserId
 
-    if cam and cam.WorldToViewportPoint then
-        local ok, sp, _, depth = pcall(function() return cam:WorldToViewportPoint(worldPos) end)
-        if ok and sp then
-            local viewport = cam.ViewportSize
-            if depth and depth < 0 then sp = Vector3.new(viewport.X - sp.X, viewport.Y - sp.Y, depth) end
-            local x = math.clamp(sp.X, margin, viewport.X - margin)
-            local y = math.clamp(sp.Y, margin, viewport.Y - margin)
-            return Vector2.new(x, y), false
+    safe("players", collectPlayers, master)
+    safe("deployables", collectModels, deployCat, master and cfg.deployable.enabled, Workspace:FindFirstChild("Deployables"), nil)
+    local bf = Workspace:FindFirstChild("BountyVehicles")
+    safe("bounty", collectModels, bountyCat, master and cfg.bountyVehicle.enabled, bf and bf:FindFirstChild("Vehicles"), nil)
+    safe("vehicles", collectVehicles, master)
+    safe("heli", collectHeli, master)
+end
+
+-- Fast tick (own vehicles only): health reads for the damage popup
+local function tickHealth()
+    if not cfg.masterEnabled or not cfg.vehicleHealth.enabled then return end
+    local now = os.clock()
+    local arr = ownCat.arr
+    for i = 1, #arr do
+        local e = arr[i]
+        local ho = e.healthObj
+        local h = ho and ho.Value
+        if type(h) == "number" then
+            if e.lastHealth == nil then
+                e.lastHealth = h
+                e.maxHealth = e.realMax or h
+                e.showUntil = 0
+            end
+            if e.realMax then
+                e.maxHealth = e.realMax
+            elseif h > e.maxHealth then
+                e.maxHealth = h
+            end
+            if h < e.lastHealth then
+                e.showUntil = now + (cfg.vehicleHealth.showSeconds or 5)
+            end
+            e.lastHealth = h
+            e.hp = h
         end
     end
-    return nil, false
 end
 
 ----------------------------------------------------
--- CACHE UPDATES
+-- RENDERER (fast, reads cached parts only)
 ----------------------------------------------------
-local function updateCriminalCache()
-    if not cfg.masterEnabled or not cfg.criminal.enabled then
-        for i = #criminalList, 1, -1 do removeEsp(criminalList[i]) table.remove(criminalList, i) end
-        return
-    end
+local heliLbl, heliSpotLbl = nil, nil
+local shown = { crim = false, panic = false, deploy = false, bounty = false, stolen = false, personal = false, hp = false, heli = false }
+local hiddenAll = false
 
-    local tracked = {}
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.UserId ~= (LocalPlayer and LocalPlayer.UserId) then
-            local isWanted = player:FindFirstChild("Is_Wanted")
-            local val = isWanted and isWanted.Value
-            if val and (type(val) ~= "number" or val > 0) then
-                local key = getKey(player)
-                if key then tracked[key] = player end
-            end
+local function hideEverything()
+    for _, cat in ipairs({ crimCat, panicCat, deployCat, bountyCat, stolenCat, ownCat }) do
+        for _, e in ipairs(cat.arr) do
+            hideField(e, "label"); hideField(e, "price"); hideField(e, "hpLabel")
+            hideCircle(e.circle)
         end
     end
-
-    for i = #criminalList, 1, -1 do
-        local e = criminalList[i]
-        local key = getKey(e.Player)
-        if not key or not tracked[key] or e.Player == LocalPlayer then
-            removeEsp(e)
-            table.remove(criminalList, i)
-        else
-            tracked[key] = nil
-        end
-    end
-
-    for _, player in pairs(tracked) do
-        if player ~= LocalPlayer then
-            table.insert(criminalList, {
-                Player = player,
-                Label  = createTextEsp(cfg.criminal.fontSize),
-                Circle = createCircleEsp()
-            })
-        end
-    end
+    hideLabel(heliLbl); hideLabel(heliSpotLbl)
+    for k in pairs(shown) do shown[k] = false end
 end
 
-local function updatePanicCache()
-    if not cfg.masterEnabled or not cfg.panic.enabled then
-        for i = #panicList, 1, -1 do removeEsp(panicList[i]) table.remove(panicList, i) end
-        return
-    end
-
-    local tracked = {}
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            local char = player.Character
-            local activePanic = player:FindFirstChild("ActivePanic") or (char and char:FindFirstChild("ActivePanic"))
-            local isPanicActive = false
-            if activePanic then
-                if activePanic:IsA("BoolValue") then isPanicActive = activePanic.Value == true else isPanicActive = true end
+-- Generic text category. Returns nothing; hides entries it can't place.
+local function drawTextCat(arr, c, lx, ly, lz, hasL, maxD, after)
+    for i = 1, #arr do
+        local e = arr[i]
+        local part = e.part
+        local ok = false
+        if part and not e.hidden and part.Parent then
+            local pos = part.Position
+            local px, py, pz = pos.X, pos.Y, pos.Z
+            local dist = 0
+            if hasL then
+                local dx, dy, dz = px - lx, py - ly, pz - lz
+                dist = sqrt(dx * dx + dy * dy + dz * dz)
             end
-            if isPanicActive then
-                local key = getKey(player)
-                if key then tracked[key] = player end
-            end
-        end
-    end
-
-    for i = #panicList, 1, -1 do
-        local e = panicList[i]
-        local key = getKey(e.Player)
-        if not key or not tracked[key] then
-            removeEsp(e)
-            table.remove(panicList, i)
-        else
-            tracked[key] = nil
-        end
-    end
-
-    for _, player in pairs(tracked) do
-        table.insert(panicList, { Player = player, Label = createTextEsp(cfg.panic.fontSize) })
-    end
-end
-
-local function updateDeployableCache()
-    if not cfg.masterEnabled or not cfg.deployable.enabled then
-        for i = #deployableList, 1, -1 do removeEsp(deployableList[i]) table.remove(deployableList, i) end
-        return
-    end
-
-    local folder = Workspace:FindFirstChild("Deployables")
-    local tracked = {}
-    if folder then
-        for _, model in ipairs(folder:GetChildren()) do
-            if model:IsA("Model") or model:IsA("Folder") then
-                local key = getKey(model)
-                if key then tracked[key] = model end
-            end
-        end
-    end
-
-    for i = #deployableList, 1, -1 do
-        local e = deployableList[i]
-        local key = getKey(e.Model)
-        if not key or not tracked[key] then
-            removeEsp(e)
-            table.remove(deployableList, i)
-        else
-            tracked[key] = nil
-        end
-    end
-
-    for _, model in pairs(tracked) do
-        table.insert(deployableList, { Model = model, Label = createTextEsp(cfg.deployable.fontSize) })
-    end
-end
-
-local function updateBountyCache()
-    if not cfg.masterEnabled or not cfg.bountyVehicle.enabled then
-        for i = #bountyList, 1, -1 do removeEsp(bountyList[i]) table.remove(bountyList, i) end
-        return
-    end
-
-    local folder   = Workspace:FindFirstChild("BountyVehicles")
-    local vehicles = folder and folder:FindFirstChild("Vehicles")
-    local tracked  = {}
-    if vehicles then
-        for _, model in ipairs(vehicles:GetChildren()) do
-            if model:IsA("Model") or model:IsA("Folder") then
-                local key = getKey(model)
-                if key then tracked[key] = model end
-            end
-        end
-    end
-
-    for i = #bountyList, 1, -1 do
-        local e = bountyList[i]
-        local key = getKey(e.Model)
-        if not key or not tracked[key] then
-            removeEsp(e)
-            table.remove(bountyList, i)
-        else
-            tracked[key] = nil
-        end
-    end
-
-    for _, model in pairs(tracked) do
-        table.insert(bountyList, { Model = model, Label = createTextEsp(cfg.bountyVehicle.fontSize) })
-    end
-end
-
-local function updateStolenCache()
-    if not cfg.masterEnabled or not cfg.stolenVehicle.enabled then
-        for i = #stolenList, 1, -1 do removeEsp(stolenList[i]) table.remove(stolenList, i) end
-        return
-    end
-
-    local vehicles = Workspace:FindFirstChild("Vehicles")
-    local tracked  = {}
-    if vehicles then
-        for _, model in ipairs(vehicles:GetChildren()) do
-            if model:IsA("Model") or model:IsA("Folder") then
-                local price = model:GetAttribute("ChopShopPrice")
-                if typeof(price) == "number" then
-                    local key = getKey(model)
-                    if key then tracked[key] = model end
+            if dist <= maxD then
+                local s, on = WorldToScreen(Vector3.new(px, py + c.yOffset * OFFSET_STUD_SCALE, pz))
+                if on and s then
+                    local sx, sy = floor(s.X + 0.5), floor(s.Y + 0.5)
+                    showLabel(getLbl(e, "label"), e.text or "", c.color, calcFontSize(c.fontSize, dist), sx, sy)
+                    ok = true
+                    if after then after(e, sx, sy, dist) end
                 end
             end
         end
-    end
-
-    for i = #stolenList, 1, -1 do
-        local e = stolenList[i]
-        local key = getKey(e.Model)
-        if not key or not tracked[key] then
-            removeEsp(e)
-            table.remove(stolenList, i)
-        else
-            tracked[key] = nil
-        end
-    end
-
-    for _, model in pairs(tracked) do
-        table.insert(stolenList, {
-            Model      = model,
-            Label      = createTextEsp(cfg.stolenVehicle.fontSize),
-            PriceLabel = createTextEsp(11)
-        })
-    end
-end
-
-local function updatePersonalCache()
-    if not cfg.masterEnabled or not cfg.personalVehicle.enabled then
-        for i = #personalList, 1, -1 do removeEsp(personalList[i]) table.remove(personalList, i) end
-        return
-    end
-
-    local myName = LocalPlayer and LocalPlayer.Name
-    if not myName then return end
-
-    local vehicles = Workspace:FindFirstChild("Vehicles")
-    local tracked  = {}
-    if vehicles then
-        for _, model in ipairs(vehicles:GetChildren()) do
-            if model:IsA("Model") or model:IsA("Folder") then
-                local owner = getOwnerString(model)
-                if owner and owner == myName then
-                    local key = getKey(model)
-                    if key then tracked[key] = model end
-                end
-            end
-        end
-    end
-
-    for i = #personalList, 1, -1 do
-        local e = personalList[i]
-        local key = getKey(e.Model)
-        if not key or not tracked[key] then
-            removeEsp(e)
-            table.remove(personalList, i)
-        else
-            tracked[key] = nil
-        end
-    end
-
-    for _, model in pairs(tracked) do
-        table.insert(personalList, { Model = model, Label = createTextEsp(cfg.personalVehicle.fontSize) })
-    end
-end
-
--- Cached: list of the local player's vehicles (used by the health overlay)
-local function updateOwnVehicles()
-    local out = {}
-    local myName = LocalPlayer and LocalPlayer.Name
-    local vehicles = Workspace:FindFirstChild("Vehicles")
-    if myName and vehicles then
-        for _, m in ipairs(vehicles:GetChildren()) do
-            if (m:IsA("Model") or m:IsA("Folder")) and getOwnerString(m) == myName then
-                out[#out + 1] = m
-            end
-        end
-    end
-    ownVehicles = out
-end
-
--- Cached: names of spotlighted players
-local function updateSpotlight()
-    local names = {}
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            local l = p:FindFirstChild("LastLocation")
-            local s = l and l:FindFirstChild("Spotlighted")
-            if s and s.Value == true then names[#names + 1] = p.Name end
-        end
-    end
-    spotlightNames = names
-end
-
-local function updateVehicleHealthVisual(localPos, maxDist)
-    if not cfg.masterEnabled or not cfg.vehicleHealth.enabled or not localPos then
-        for _, st in pairs(vehicleHealthState) do if st.label then st.label.Visible = false end end
-        return
-    end
-
-    local now      = tick()
-    local seen     = {}
-    local nearDist = maxDist or cfg.settings.maxDistance or 5000
-
-    for _, model in ipairs(ownVehicles) do
-        local key  = getKey(model)
-        local root = key and model.Parent and getRootPart(model)
-        local health = root and getVehicleHealth(model)
-        if root and typeof(health) == "number" then
-            local pos  = root.Position
-            local dist = (pos - localPos).Magnitude
-            if dist <= nearDist then
-                seen[key] = true
-                local st = vehicleHealthState[key]
-                if not st then
-                    local mh = math.max(getVehicleMaxHealth(model) or health, health, 1)
-                    st = {
-                        lastHealth = health,
-                        maxHealth  = mh,
-                        showUntil  = 0,
-                        label      = createTextEsp(cfg.vehicleHealth.fontSize),
-                        model      = model,
-                    }
-                    vehicleHealthState[key] = st
-                end
-                st.model = model
-
-                local realMax = getVehicleMaxHealth(model)
-                if realMax and realMax > 0 then
-                    st.maxHealth = realMax
-                elseif health > (st.maxHealth or 0) then
-                    st.maxHealth = health
-                end
-
-                if health < st.lastHealth then
-                    st.showUntil = now + (cfg.vehicleHealth.showSeconds or 5)
-                end
-                st.lastHealth = health
-
-                if now < st.showUntil then
-                    local text = "HP: " .. tostring(math.floor(health + 0.5))
-                    local col  = healthToColor(health, st.maxHealth)
-                    drawText(st.label, pos, text, col, cfg.vehicleHealth.yOffset, cfg.vehicleHealth.fontSize, dist)
-                else
-                    st.label.Visible = false
-                end
-            end
-        end
-    end
-
-    for key, st in pairs(vehicleHealthState) do
-        if not seen[key] then
-            if st.label then st.label.Visible = false end
-            if not st.model or not st.model.Parent then
-                if st.label then
-                    pcall(function() st.label:Remove() end)
-                    allDrawings[st.label] = nil
-                end
-                vehicleHealthState[key] = nil
-            end
+        if not ok then
+            hideField(e, "label")
+            if after then hideField(e, "price") end
         end
     end
 end
 
-local function updateVisuals()
-    if not cfg.masterEnabled then
-        for _, list in ipairs({criminalList, panicList, deployableList, bountyList, stolenList, personalList}) do
-            for _, e in ipairs(list) do hideEntry(e) end
-        end
-        for _, st in pairs(vehicleHealthState) do if st.label then st.label.Visible = false end end
-        if heliLabel then heliLabel.Visible = false end
-        if heliSpotlightLabel then heliSpotlightLabel.Visible = false end
-        return
-    end
-
-    local localPos = getLocalPos()
-    local maxDist  = cfg.settings.maxDistance
-    local myName   = LocalPlayer and LocalPlayer.Name
-
-    for _, e in ipairs(criminalList) do
-        pcall(function()
-            local player = e.Player
-            if not player or not player.Parent or player == LocalPlayer then hideEntry(e) return end
-            local char = player.Character
-            local head = char and char:FindFirstChild("Head")
-            if not head then hideEntry(e) return end
-
-            local pos  = head.Position
-            local dist = localPos and (pos - localPos).Magnitude or 0
-            if localPos and dist > maxDist then hideEntry(e) return end
-
-            local sPos, onScreen = WorldToScreen(pos)
-            if onScreen and sPos then
-                local radius = math.clamp(380 / (dist > 0 and dist or 1), 3, 8)
-                e.Circle.Position = sPos
-                e.Circle.Radius   = radius
-                e.Circle.Color    = cfg.criminal.color
-                e.Circle.Visible  = true
-
-                local val = player:FindFirstChild("Is_Wanted")
-                local wantedVal = val and val.Value or 0
-                local fs = calcFontSize(cfg.criminal.fontSize, dist)
-                applyTextStyle(e.Label, fs)
-                e.Label.Text     = tostring(wantedVal)
-                e.Label.Color    = cfg.criminal.color
-                e.Label.Position = Vector2.new(sPos.X, sPos.Y + radius + 4)
-                e.Label.Visible  = true
-            else
-                hideEntry(e)
-            end
-        end)
-    end
-
-    for _, e in ipairs(panicList) do
-        pcall(function()
-            local player = e.Player
-            if not player or not player.Parent or player == LocalPlayer then hideEntry(e) return end
-            local char = player.Character
-            local head = char and char:FindFirstChild("Head")
-            if not head then hideEntry(e) return end
-            local pos  = head.Position
-            local dist = localPos and (pos - localPos).Magnitude or 0
-            if localPos and dist > maxDist then hideEntry(e) return end
-            drawText(e.Label, pos, "*PANIC*", cfg.panic.color, cfg.panic.yOffset, cfg.panic.fontSize, dist)
-        end)
-    end
-
-    for _, e in ipairs(deployableList) do
-        pcall(function()
-            local model = e.Model
-            if not model or not model.Parent then hideEntry(e) return end
-            local root = getRootPart(model)
-            if not root then hideEntry(e) return end
-            local pos  = root.Position
-            local dist = localPos and (pos - localPos).Magnitude or 0
-            if localPos and dist > maxDist then hideEntry(e) return end
-            drawText(e.Label, pos, model.Name, cfg.deployable.color, cfg.deployable.yOffset, cfg.deployable.fontSize, dist)
-        end)
-    end
-
-    for _, e in ipairs(bountyList) do
-        pcall(function()
-            local model = e.Model
-            if not model or not model.Parent then hideEntry(e) return end
-            local root = getRootPart(model)
-            if not root then hideEntry(e) return end
-            local pos  = root.Position
-            local dist = localPos and (pos - localPos).Magnitude or 0
-            if localPos and dist > maxDist then hideEntry(e) return end
-            drawText(e.Label, pos, model.Name, cfg.bountyVehicle.color, cfg.bountyVehicle.yOffset, cfg.bountyVehicle.fontSize, dist)
-        end)
-    end
-
-    for _, e in ipairs(stolenList) do
-        pcall(function()
-            local model = e.Model
-            if not model or not model.Parent then hideEntry(e) return end
-            local root = getRootPart(model)
-            if not root then hideEntry(e) return end
-            local pos  = root.Position
-            local dist = localPos and (pos - localPos).Magnitude or 0
-            if localPos and dist > maxDist then hideEntry(e) return end
-
-            local sPos = drawText(e.Label, pos, "*Stolen Vehicle*", cfg.stolenVehicle.color, cfg.stolenVehicle.yOffset, cfg.stolenVehicle.fontSize, dist)
-            if sPos and cfg.stolenVehicle.showPrice then
-                local price = model:GetAttribute("ChopShopPrice") or 0
-                local fs = calcFontSize(11, dist)
-                applyTextStyle(e.PriceLabel, fs)
-                e.PriceLabel.Text     = "$" .. tostring(price)
-                e.PriceLabel.Color    = cfg.stolenVehicle.priceColor
-                e.PriceLabel.Position = Vector2.new(sPos.X, sPos.Y + 16)
-                e.PriceLabel.Visible  = true
-            else
-                e.PriceLabel.Visible = false
-            end
-        end)
-    end
-
-    for _, e in ipairs(personalList) do
-        pcall(function()
-            local model = e.Model
-            if not model or not model.Parent then hideEntry(e) return end
-            local driver = getDriverName(model)
-            if myName and driver and driver == myName then hideEntry(e) return end
-            local root = getRootPart(model)
-            if not root then hideEntry(e) return end
-            local pos  = root.Position
-            local dist = localPos and (pos - localPos).Magnitude or 0
-            if localPos and dist > maxDist then hideEntry(e) return end
-            drawText(e.Label, pos, cfg.personalVehicle.text, cfg.personalVehicle.color, cfg.personalVehicle.yOffset, cfg.personalVehicle.fontSize, dist)
-        end)
-    end
-
-    safe("vehicleHealth", updateVehicleHealthVisual, localPos, maxDist)
-
-    -- Helicopter
-    if cfg.helicopter.enabled then
-        if not heliLabel then
-            heliLabel = createTextEsp(cfg.helicopter.fontSize)
-            heliLabel.Color = cfg.helicopter.color
-        end
-        if not heliSpotlightLabel then
-            heliSpotlightLabel = createTextEsp(cfg.helicopter.spotlightFontSize)
-            heliSpotlightLabel.Color = cfg.helicopter.spotlightColor
-        end
-
-        local heliPos = getHelicopterPosition()
-        if heliPos then
-            local dist = localPos and (heliPos - localPos).Magnitude or 0
-            local screenPos = getHeliScreenPos(heliPos)
-            if screenPos then
-                local fs = calcFontSize(cfg.helicopter.fontSize, dist)
-                applyTextStyle(heliLabel, fs)
-                heliLabel.Text     = cfg.helicopter.text
-                heliLabel.Color    = cfg.helicopter.color
-                heliLabel.Position = screenPos
-                heliLabel.Visible  = true
-
-                if cfg.helicopter.showSpotlight and #spotlightNames > 0 then
-                    local text = "Spotlighted: " .. table.concat(spotlightNames, ", ")
-                    local sfs = calcFontSize(cfg.helicopter.spotlightFontSize, dist)
-                    applyTextStyle(heliSpotlightLabel, sfs)
-                    heliSpotlightLabel.Text     = text
-                    heliSpotlightLabel.Color    = cfg.helicopter.spotlightColor
-                    heliSpotlightLabel.Position = Vector2.new(screenPos.X, screenPos.Y + 16)
-                    heliSpotlightLabel.Visible  = true
-                else
-                    heliSpotlightLabel.Visible = false
-                end
-            else
-                heliLabel.Visible = false
-                heliSpotlightLabel.Visible = false
-            end
-        else
-            heliLabel.Visible = false
-            heliSpotlightLabel.Visible = false
-        end
+local function stolenAfter(e, sx, sy, dist)
+    local sv = cfg.stolenVehicle
+    if sv.showPrice then
+        showLabel(getLbl(e, "price"), e.priceText or "", sv.priceColor, calcFontSize(11, dist), sx, sy + 16)
     else
-        if heliLabel then heliLabel.Visible = false end
-        if heliSpotlightLabel then heliSpotlightLabel.Visible = false end
+        hideField(e, "price")
+    end
+end
+
+local function drawCriminals(lx, ly, lz, hasL, maxD)
+    local arr = crimCat.arr
+    local c = cfg.criminal
+    for i = 1, #arr do
+        local e = arr[i]
+        local part = e.part
+        local ok = false
+        if part and part.Parent then
+            local pos = part.Position
+            local dist = 0
+            if hasL then
+                local dx, dy, dz = pos.X - lx, pos.Y - ly, pos.Z - lz
+                dist = sqrt(dx * dx + dy * dy + dz * dz)
+            end
+            if dist <= maxD then
+                local s, on = WorldToScreen(pos)
+                if on and s then
+                    local radius = clamp(380 / (dist > 0 and dist or 1), 3, 8)
+                    local sx, sy = floor(s.X + 0.5), floor(s.Y + 0.5)
+                    showCircle(getCirc(e), sx, sy, radius, c.color)
+                    showLabel(getLbl(e, "label"), e.text or "", c.color, calcFontSize(c.fontSize, dist), sx, floor(sy + radius + 4))
+                    ok = true
+                end
+            end
+        end
+        if not ok then
+            hideField(e, "label")
+            hideCircle(e.circle)
+        end
+    end
+end
+
+local function drawHealth(lx, ly, lz, hasL, maxD, now)
+    local arr = ownCat.arr
+    local c = cfg.vehicleHealth
+    for i = 1, #arr do
+        local e = arr[i]
+        local part = e.part
+        local ok = false
+        if part and e.hp and now < (e.showUntil or 0) and part.Parent then
+            local pos = part.Position
+            local px, py, pz = pos.X, pos.Y, pos.Z
+            local dist = 0
+            if hasL then
+                local dx, dy, dz = px - lx, py - ly, pz - lz
+                dist = sqrt(dx * dx + dy * dy + dz * dz)
+            end
+            if dist <= maxD then
+                local s, on = WorldToScreen(Vector3.new(px, py + c.yOffset * OFFSET_STUD_SCALE, pz))
+                if on and s then
+                    local col = healthToColor(e.hp, e.maxHealth)
+                    showLabel(getLbl(e, "hpLabel"), "HP: " .. tostring(floor(e.hp + 0.5)), col, calcFontSize(c.fontSize, dist), floor(s.X + 0.5), floor(s.Y + 0.5))
+                    ok = true
+                end
+            end
+        end
+        if not ok then hideField(e, "hpLabel") end
+    end
+end
+
+local function drawHeli(lx, ly, lz, hasL)
+    local h = cfg.helicopter
+    local pos = nil
+    if heliPart and heliPart.Parent then
+        pos = heliPart.Position
+    elseif heliOutObj and heliPosObj and heliOutObj.Value == true then
+        pos = heliPosObj.Value
+    end
+
+    if not heliLbl then heliLbl = newLabel() end
+    if not heliSpotLbl then heliSpotLbl = newLabel() end
+
+    local placed = false
+    if pos then
+        local s, on = WorldToScreen(pos)
+        if on and s then
+            local dist = 0
+            if hasL then
+                local dx, dy, dz = pos.X - lx, pos.Y - ly, pos.Z - lz
+                dist = sqrt(dx * dx + dy * dy + dz * dz)
+            end
+            local sx, sy = floor(s.X + 0.5), floor(s.Y + 0.5)
+            showLabel(heliLbl, h.text, h.color, calcFontSize(h.fontSize, dist), sx, sy)
+            placed = true
+            if h.showSpotlight and spotText then
+                showLabel(heliSpotLbl, spotText, h.spotlightColor, calcFontSize(h.spotlightFontSize, dist), sx, sy + 16)
+            else
+                hideLabel(heliSpotLbl)
+            end
+        end
+    end
+    if not placed then
+        hideLabel(heliLbl)
+        hideLabel(heliSpotLbl)
+    end
+end
+
+local function drawAll()
+    if not cfg.masterEnabled then
+        if not hiddenAll then hideEverything(); hiddenAll = true end
+        return
+    end
+    hiddenAll = false
+
+    local lx, ly, lz, hasL = 0, 0, 0, false
+    local lr = localRoot
+    local lp = nil
+    if lr and lr.Parent then
+        lp = lr.Position
+    elseif cam then
+        lp = cam.Position
+    end
+    if lp then lx, ly, lz, hasL = lp.X, lp.Y, lp.Z, true end
+    local maxD = cfg.settings.maxDistance
+    local now = os.clock()
+
+    if cfg.criminal.enabled then
+        drawCriminals(lx, ly, lz, hasL, maxD); shown.crim = true
+    elseif shown.crim then
+        for _, e in ipairs(crimCat.arr) do hideField(e, "label"); hideCircle(e.circle) end
+        shown.crim = false
+    end
+
+    if cfg.panic.enabled then
+        drawTextCat(panicCat.arr, cfg.panic, lx, ly, lz, hasL, maxD, nil); shown.panic = true
+    elseif shown.panic then
+        hideAll(panicCat.arr, "label"); shown.panic = false
+    end
+
+    if cfg.deployable.enabled then
+        drawTextCat(deployCat.arr, cfg.deployable, lx, ly, lz, hasL, maxD, nil); shown.deploy = true
+    elseif shown.deploy then
+        hideAll(deployCat.arr, "label"); shown.deploy = false
+    end
+
+    if cfg.bountyVehicle.enabled then
+        drawTextCat(bountyCat.arr, cfg.bountyVehicle, lx, ly, lz, hasL, maxD, nil); shown.bounty = true
+    elseif shown.bounty then
+        hideAll(bountyCat.arr, "label"); shown.bounty = false
+    end
+
+    if cfg.stolenVehicle.enabled then
+        drawTextCat(stolenCat.arr, cfg.stolenVehicle, lx, ly, lz, hasL, maxD, stolenAfter); shown.stolen = true
+    elseif shown.stolen then
+        hideAll(stolenCat.arr, "label"); hideAll(stolenCat.arr, "price"); shown.stolen = false
+    end
+
+    if cfg.personalVehicle.enabled then
+        drawTextCat(ownCat.arr, cfg.personalVehicle, lx, ly, lz, hasL, maxD, nil); shown.personal = true
+    elseif shown.personal then
+        hideAll(ownCat.arr, "label"); shown.personal = false
+    end
+
+    if cfg.vehicleHealth.enabled then
+        drawHealth(lx, ly, lz, hasL, maxD, now); shown.hp = true
+    elseif shown.hp then
+        hideAll(ownCat.arr, "hpLabel"); shown.hp = false
+    end
+
+    if cfg.helicopter.enabled then
+        drawHeli(lx, ly, lz, hasL); shown.heli = true
+    elseif shown.heli then
+        hideLabel(heliLbl); hideLabel(heliSpotLbl); shown.heli = false
     end
 end
 
 ----------------------------------------------------
--- 1. ATM HACK (MODERN GRID SOLVER)
+-- 1. ATM HACK
 ----------------------------------------------------
 local function looksLikeCode(text)
     if type(text) ~= "string" then return nil end
@@ -1308,7 +1330,7 @@ local function findCodeGrid(hacking)
         if x and y and sx and sy and sx > 0 and sy > 0 then
             c.cx = x + sx / 2
             c.cy = y + sy / 2
-            local sig = string.format("%d:%d", math.floor(sx / 3), math.floor(sy / 3))
+            local sig = string.format("%d:%d", floor(sx / 3), floor(sy / 3))
             local g = groups[sig]
             if not g then g = {} groups[sig] = g end
             table.insert(g, c)
@@ -1349,11 +1371,8 @@ local atmState = {
     lastCode = "",
 }
 
-local function stepAtm()
-    if not cfg.atm.enabled then return end
-    local pg = getPlayerGui()
-    local menus = pg and findChild(pg, "GameMenus")
-    local atmUi = menus and findChild(menus, "ATM")
+local function stepAtm(menus)
+    local atmUi = findChild(menus, "ATM")
     local hacking = atmUi and findChild(atmUi, "Hacking")
     if not hacking or memVisible(hacking) == false then
         atmState.session = nil
@@ -1402,7 +1421,7 @@ local function stepAtm()
     if not gx or not gy or not gsx then return end
 
     local dist = moveMouseToward(gx + gsx / 2, gy + (gsy or 18) / 2)
-    local onCell = dist <= math.max((gsx or 20) * 0.35, 10)
+    local onCell = dist <= max((gsx or 20) * 0.35, 10)
 
     local lit = findLitIndex(nodes)
     if lit and lit ~= atmState.litIndex then
@@ -1420,12 +1439,12 @@ local function stepAtm()
 
     local liveKey = lit and looksLikeCode(memText(nodes[lit].inst)) or nil
     if atmState.clickedRound then
-        local cycleTime = math.max(atmState.stepTime * #nodes + 0.3, 0.6)
+        local cycleTime = max(atmState.stepTime * #nodes + 0.3, 0.6)
         if now - atmState.lastClick <= cycleTime then return end
         atmState.clickedRound = false
     end
 
-    local delay = math.max((tonumber(cfg.atm.delay) or 50) / 1000, 0.03)
+    local delay = max((tonumber(cfg.atm.delay) or 50) / 1000, 0.03)
     if now - atmState.lastClick < delay then return end
 
     local ready = liveKey == target
@@ -1460,11 +1479,8 @@ local function pinOverlapsLine(pin, line, pad)
     return pTop <= lBot and lTop <= pBot
 end
 
-local function stepLockpick()
-    if not cfg.lockpick.enabled then return end
-    local pg = getPlayerGui()
-    local menus = pg and findChild(pg, "GameMenus")
-    local ui = menus and findChild(menus, "Lockpick")
+local function stepLockpick(menus)
+    local ui = findChild(menus, "Lockpick")
     if not ui or memVisible(ui) == false then
         lockpickState.session = nil
         lockpickState.pin = 1
@@ -1488,10 +1504,10 @@ local function stepLockpick()
     if not pin then return end
 
     local now = os.clock()
-    local delay = math.max((tonumber(cfg.lockpick.delay) or 40) / 1000, 0.03)
+    local delay = max((tonumber(cfg.lockpick.delay) or 40) / 1000, 0.03)
     if now - lockpickState.lastClick < delay then return end
 
-    local pad = math.max(tonumber(cfg.lockpick.tolerance) or 2, 0)
+    local pad = max(tonumber(cfg.lockpick.tolerance) or 2, 0)
     if pinOverlapsLine(pin, line, pad) then
         pcall(mouse1click)
         lockpickState.lastClick = now
@@ -1507,9 +1523,7 @@ end
 local glassState = { lastX = nil, lastY = nil, lastT = 0, velX = 0, velY = 0 }
 
 local function stepGlassCut()
-    if not cfg.glasscut.enabled then return end
-    local pg = getPlayerGui()
-    local menus = pg and findChild(pg, "GameMenus")
+    local menus = getMenus()
     local cut = menus and findChild(menus, "GlassCutting")
     if not cut or memVisible(cut) == false then
         glassState.lastX, glassState.lastY = nil, nil
@@ -1519,7 +1533,6 @@ local function stepGlassCut()
     local box = findChild(cut, "GreenBox")
     if not box then return end
 
-    local vw, vh = viewportSize()
     local x, y = memAbsPos(box)
     local sx, sy = memAbsSize(box)
     if not x or not y or not sx or not sy or sx < 4 or sy < 4 then return end
@@ -1535,7 +1548,7 @@ local function stepGlassCut()
     end
     glassState.lastX, glassState.lastY, glassState.lastT = cx, cy, now
 
-    local lead = math.max((tonumber(cfg.glasscut.lead) or 0) / 1000, 0)
+    local lead = max((tonumber(cfg.glasscut.lead) or 0) / 1000, 0)
     local tx, ty = cx + glassState.velX * lead, cy + glassState.velY * lead
     moveMouseToward(tx, ty)
 end
@@ -1576,17 +1589,17 @@ local function stepCrowbarBar(menus, now)
         end
     end
 
-    if math.abs(crowBarState.vel) < 5 then return true end
+    if abs(crowBarState.vel) < 5 then return true end
 
-    local latency = math.max((tonumber(cfg.hotwire.latency) or 50) / 1000, 0)
-    local frameDt = math.min(crowBarState.frameDt or (1 / 60), 0.05)
-    local marginPct = math.min(math.max(tonumber(cfg.hotwire.margin) or 25, 0), 45) / 100
+    local latency = max((tonumber(cfg.hotwire.latency) or 50) / 1000, 0)
+    local frameDt = min(crowBarState.frameDt or (1 / 60), 0.05)
+    local marginPct = min(max(tonumber(cfg.hotwire.margin) or 25, 0), 45) / 100
     local inset = zoneRect.w * marginPct / 2
     local fromX = barRect.cx + crowBarState.vel * latency
     local toX = fromX + crowBarState.vel * frameDt
-    local lo, hi = math.min(fromX, toX), math.max(fromX, toX)
+    local lo, hi = min(fromX, toX), max(fromX, toX)
 
-    local delay = math.max((tonumber(cfg.hotwire.delay) or 50) / 1000, 0.05)
+    local delay = max((tonumber(cfg.hotwire.delay) or 50) / 1000, 0.05)
     if now - crowBarState.lastClick >= delay then
         if lo <= zoneRect.x + zoneRect.w - inset and hi >= zoneRect.x + inset then
             pcall(mouse1click)
@@ -1675,8 +1688,8 @@ local function stepNumbersHack(menus, now)
         return true
     end
 
-    local shown = memVisible(currentImg)
-    if shown == true then
+    local shownNow = memVisible(currentImg)
+    if shownNow == true then
         if not numHackState.lastVisible then
             numHackState.shownAt = now
             numHackState.seenDigit = nil
@@ -1709,7 +1722,7 @@ local function stepNumbersHack(menus, now)
 
     local hiddenLongEnough = numHackState.hiddenSince > 0 and (now - numHackState.hiddenSince) >= 0.3
     local lastAged = (now - (numHackState.lastDigitAt or 0)) >= 0.45
-    if #numHackState.seq >= 6 and shown == false and hiddenLongEnough and lastAged then
+    if #numHackState.seq >= 6 and shownNow == false and hiddenLongEnough and lastAged then
         numHackState.playing = true
         numHackState.playIndex = 1
     end
@@ -1719,6 +1732,14 @@ end
 -- C. Wire Pairing (Connect Wires Solver)
 local WIRE_COLORS = { "Blue", "Green", "Red", "Yellow" }
 local wireState = { session = nil, phase = "aim", held = false, lastDone = 0, releasedAt = 0, nearSince = 0, currentColor = nil, done = {} }
+
+local function resetWires()
+    if wireState.held then pcall(mouse1release) end
+    wireState.session = nil
+    wireState.held = false
+    wireState.phase = "aim"
+    wireState.done = {}
+end
 
 local function wireSide(name)
     if type(name) ~= "string" then return nil, nil end
@@ -1760,7 +1781,6 @@ local function findWireDropTarget(ui, pair)
         if contact and guiRect(contact) then return contact end
     end
 
-    -- (removed: GetDescendants fallback — it ran every tick and could never return a value)
     return nil
 end
 
@@ -1780,14 +1800,30 @@ local function isWireConnected(ui, pair)
     return false
 end
 
+-- Wire buttons are direct children of the UI at runtime, but sit under "ConnectWires LS.Wires" in the static tree
+local function collectWireButtons(ui, lefts, rights)
+    local function scan(container)
+        if not container then return end
+        for _, child in ipairs(container:GetChildren()) do
+            local color, side = wireSide(child.Name)
+            if color and guiRect(child) then
+                local drag = findChild(child, "Drag") or child
+                if side == "L" then lefts[color] = { frame = child, drag = drag }
+                else rights[color] = { frame = child, drag = drag } end
+            end
+        end
+    end
+    scan(ui)
+    if next(lefts) == nil and next(rights) == nil then
+        local ls = findChild(ui, "ConnectWires LS")
+        scan(ls and findChild(ls, "Wires"))
+    end
+end
+
 local function stepConnectWires(menus, now)
     local ui = findChild(menus, "ConnectWires")
     if not ui or memVisible(ui) ~= true then
-        if wireState.held then pcall(mouse1release) end
-        wireState.session = nil
-        wireState.held = false
-        wireState.phase = "aim"
-        wireState.done = {}
+        resetWires()
         return false
     end
 
@@ -1798,14 +1834,7 @@ local function stepConnectWires(menus, now)
     end
 
     local lefts, rights = {}, {}
-    for _, child in ipairs(ui:GetChildren()) do
-        local color, side = wireSide(child.Name)
-        if color and guiRect(child) then
-            local drag = findChild(child, "Drag") or child
-            if side == "L" then lefts[color] = { frame = child, drag = drag }
-            else rights[color] = { frame = child, drag = drag } end
-        end
-    end
+    collectWireButtons(ui, lefts, rights)
 
     local pair = nil
     for _, col in ipairs(WIRE_COLORS) do
@@ -1859,68 +1888,68 @@ local function stepConnectWires(menus, now)
     return true
 end
 
-----------------------------------------------------
--- AUTOFARM RUNNER THREADS
-----------------------------------------------------
-task.spawn(function()
-    while ALIVE do
-        safe("atm", stepAtm)
-        safe("lockpick", stepLockpick)
-        task.wait(0.01)
+local function stepHotwire(menus, now)
+    if memVisible(findChild(menus, "NumbersHack")) == true then
+        stepNumbersHack(menus, now)
+    elseif memVisible(findChild(menus, "ConnectWires")) == true then
+        stepConnectWires(menus, now)
+    else
+        if wireState.session then resetWires() end
+        stepCrowbarBar(menus, now)
     end
-end)
-
-if RunService then
-    local c = RunService.RenderStepped:Connect(function()
-        if not ALIVE then return end
-        safe("glasscut", stepGlassCut)
-    end)
-    conns[#conns + 1] = c
 end
 
+----------------------------------------------------
+-- THREADS
+----------------------------------------------------
+-- Autofarm dispatcher: sleeps 0.25s when nothing is enabled
 task.spawn(function()
     while ALIVE do
-        local ok, menus = pcall(function()
-            local pg = getPlayerGui()
-            return pg and findChild(pg, "GameMenus")
-        end)
-        if ok and menus and cfg.hotwire.enabled then
-            local now = os.clock()
-            if memVisible(findChild(menus, "NumbersHack")) == true then
-                safe("numbers", stepNumbersHack, menus, now)
-            elseif memVisible(findChild(menus, "ConnectWires")) == true then
-                safe("wires", stepConnectWires, menus, now)
-            else
-                safe("crowbar", stepCrowbarBar, menus, now)
+        if cfg.atm.enabled or cfg.lockpick.enabled or cfg.hotwire.enabled then
+            local menus = getMenus()
+            if menus then
+                if cfg.atm.enabled then safe("atm", stepAtm, menus) end
+                if cfg.lockpick.enabled then safe("lockpick", stepLockpick, menus) end
+                if cfg.hotwire.enabled then safe("hotwire", stepHotwire, menus, os.clock()) end
             end
+            task.wait(0.01)
+        else
+            task.wait(0.25)
         end
-        task.wait(0.01)
     end
 end)
 
-----------------------------------------------------
--- ESP BACKGROUND THREADS
-----------------------------------------------------
+-- Collector: instance lookups at 2 Hz
 task.spawn(function()
     while ALIVE do
-        safe("criminal", updateCriminalCache)
-        safe("panic", updatePanicCache)
-        safe("deployable", updateDeployableCache)
-        safe("bounty", updateBountyCache)
-        safe("stolen", updateStolenCache)
-        safe("personal", updatePersonalCache)
-        safe("ownVehicles", updateOwnVehicles)
-        safe("spotlight", updateSpotlight)
+        safe("collect", collectSlow)
         task.wait(0.5)
     end
 end)
 
+-- Health reads at ~7 Hz (own vehicles only)
 task.spawn(function()
     while ALIVE do
-        safe("visuals", updateVisuals)
-        task.wait()
+        safe("health", tickHealth)
+        task.wait(0.15)
     end
 end)
+
+-- Single render connection: glass cutting (every frame) + ESP (optionally rate limited)
+local espAcc = 0
+if RunService then
+    conns[#conns + 1] = RunService.RenderStepped:Connect(function(dt)
+        if not ALIVE then return end
+        if cfg.glasscut.enabled then safe("glasscut", stepGlassCut) end
+        local rate = cfg.settings.espRate
+        if rate and rate > 0 then
+            espAcc = espAcc + (dt or 0)
+            if espAcc < 1 / rate then return end
+            espAcc = 0
+        end
+        safe("esp", drawAll)
+    end)
+end
 
 -- Alt key toggle for Master ESP
 local lastAltState = false
@@ -1939,5 +1968,5 @@ task.spawn(function()
     end
 end)
 
-notify("ERLC ESP", "Full ESP & Autos Ready — Update #21 (NonUI)", 3)
+notify("ERLC ESP", "Full ESP & Autos Ready — Update #22 (performance build)", 3)
 print("ERLC Full ESP + Hotwire Suite loaded successfully (NonUI)!")
